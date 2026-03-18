@@ -1,0 +1,5 @@
+train: 
+val: 
+
+nc: 4 
+name: ['airplane', 'large-vehicle', 'small-vehicle']

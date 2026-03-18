@@ -1,0 +1,3 @@
+# ImgLab and ImgBlending - GUI requirements
+# Usage: pip install -r requirements.txt
+
