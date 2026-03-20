@@ -1,7 +1,0 @@
-Dataset：總共有三個資料影像，airport是只包含飛機一類的物件標籤影像，dotav2_airport是包含飛機、大型車和小型車的物件影像，custom_airport是在上述兩個資料集影像上，使用GUI合成物件影像以及使用影像增強後組成的資料集，物件類別包含飛機、大型車和小型車。
-
-rembg_img：包含飛機、大型車和小型車的截取去背影像，為了方便在GUI上對影像合成物件。
-
-requirements.txt：開啟GUI前，需安裝的python套件。
-
-GUI.py：直接執行程式檔，即開啟GUI。

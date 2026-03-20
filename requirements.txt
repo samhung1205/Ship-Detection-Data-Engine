@@ -1,3 +1,7 @@
 # ImgLab and ImgBlending - GUI requirements
 # Usage: pip install -r requirements.txt
 
+numpy>=1.20.0
+opencv-python>=4.5.0
+PyQt6>=6.4.0
+PyYAML>=6.0.0

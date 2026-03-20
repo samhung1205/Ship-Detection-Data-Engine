@@ -3,6 +3,8 @@ Save label dialog with format selection.
 """
 from PyQt6 import QtWidgets
 
+from sdde.autosave import remove_autosave
+
 
 class SavelabWindow(QtWidgets.QWidget):
     def __init__(self, main_widget: 'MyWidget'):
@@ -67,6 +69,7 @@ class SavelabWindow(QtWidgets.QWidget):
                         n_w = (x2 - x1) / m.origin_width
                         n_h = (y2 - y1) / m.origin_height
                         file.write('%s %s %s %s %s\n' % (numobj, n_x, n_y, n_w, n_h))
+                self._on_save_success()
                 self.close()
         else:
             filePath, filterType = QtWidgets.QFileDialog.getSaveFileName(
@@ -78,7 +81,14 @@ class SavelabWindow(QtWidgets.QWidget):
                         name, x1, y1, x2, y2 = data
                         numobj = m.object_list.index(name)
                         file.write('%s %s %s %s %s\n' % (x1, y1, x2, y2, numobj))
+                self._on_save_success()
                 self.close()
+
+    def _on_save_success(self) -> None:
+        if self.main_widget.imgfilePath:
+            remove_autosave(self.main_widget.imgfilePath)
+        if hasattr(self.main_widget, "_update_autosave_status"):
+            self.main_widget._update_autosave_status("Saved (autosave cleared)")
 
     def closeWindow(self):
         self.close()
