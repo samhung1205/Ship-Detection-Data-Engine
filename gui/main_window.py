@@ -57,7 +57,7 @@ class MyWidget(QtWidgets.QWidget):
     def __init__(self, is_confirm_quit: bool = True):
         super().__init__()
         self.setWindowTitle('Ship Detection Data Engine')
-        self.resize(1460, 960)
+        self.resize(1460, 720)
         self.setUpdatesEnabled(True)
         self.is_confirm_quit = is_confirm_quit
         self.x, self.y = None, None
@@ -328,7 +328,7 @@ class MyWidget(QtWidgets.QWidget):
         ### 畫布（捲動、縮放重繪、bbox / paste 疊圖；滑鼠事件由 hook 轉回 MyWidget）###
         self.centralwidget = QtWidgets.QWidget(self)
         self.verticalLayoutWidget = QtWidgets.QWidget(self.centralwidget)
-        self.verticalLayoutWidget.setGeometry(125, 30, 870, 610)
+        self.verticalLayoutWidget.setGeometry(125, 30, 870, 480)
         self.verticalLayout = QtWidgets.QVBoxLayout(self.verticalLayoutWidget)
         self.verticalLayout.setContentsMargins(0, 0, 0, 0)
         self.verticalLayout.setSpacing(0)
@@ -342,24 +342,24 @@ class MyWidget(QtWidgets.QWidget):
 
         ### control zoom ###
         self.btn_zoom_in = QtWidgets.QPushButton(self.centralwidget)
-        self.btn_zoom_in.setGeometry(QRect(155, 660, 89, 25))
+        self.btn_zoom_in.setGeometry(QRect(155, 520, 89, 25))
         self.btn_zoom_in.setText("zoom_in")
         self.btn_zoom_in.setStyleSheet(STYLE_BUTTON_PRIMARY)
         self.btn_zoom_in.setDisabled(True)
         self.btn_zoom_in.clicked.connect(self.set_zoom_in)
 
         self.slider_zoom = QtWidgets.QSlider(self.centralwidget)
-        self.slider_zoom.setGeometry(QRect(255, 660, 231, 21))
+        self.slider_zoom.setGeometry(QRect(255, 520, 231, 21))
         self.slider_zoom.setProperty("value", 50)
         self.slider_zoom.setOrientation(Qt.Orientation.Horizontal)
         self.slider_zoom.setDisabled(True)
         self.slider_zoom.valueChanged.connect(self.getslidervalue)
 
         self.label_ratio = QtWidgets.QLabel(self.centralwidget)
-        self.label_ratio.setGeometry(QRect(615, 660, 300, 21))
+        self.label_ratio.setGeometry(QRect(615, 520, 300, 21))
 
         self.btn_zoom_out = QtWidgets.QPushButton(self.centralwidget)
-        self.btn_zoom_out.setGeometry(QRect(505, 660, 89, 25))
+        self.btn_zoom_out.setGeometry(QRect(505, 520, 89, 25))
         self.btn_zoom_out.setText("zoom_out")
         self.btn_zoom_out.setStyleSheet(STYLE_BUTTON_PRIMARY)
         self.btn_zoom_out.setDisabled(True)
@@ -367,22 +367,22 @@ class MyWidget(QtWidgets.QWidget):
 
         ### mouseMove（由 ImageCanvasWidget 轉發）###
         self.label_get_pos = QtWidgets.QLabel(self)
-        self.label_get_pos.setGeometry(125, 690, 250, 18)
+        self.label_get_pos.setGeometry(125, 550, 250, 18)
         self.label_get_pos.setText('current position = (x,y)')
         self.label_get_pos.setStyleSheet('font-size: 12px;')
 
         ### mousePress（由 ImageCanvasWidget 轉發；標註模式會改為 paint / paste）###
         self.label_click_pos = QtWidgets.QLabel(self)
-        self.label_click_pos.setGeometry(380, 690, 250, 18)
+        self.label_click_pos.setGeometry(380, 550, 250, 18)
         self.label_click_pos.setText('clicked position = (x,y)')
         self.label_click_pos.setStyleSheet('font-size: 12px;')
 
         ### show img.shape ###
         self.label_img_shape = QtWidgets.QLabel(self)
-        self.label_img_shape.setGeometry(630, 690, 500, 18)
+        self.label_img_shape.setGeometry(630, 550, 500, 18)
 
         self.lbl_autosave_status = QtWidgets.QLabel(self)
-        self.lbl_autosave_status.setGeometry(125, 710, 300, 16)
+        self.lbl_autosave_status.setGeometry(125, 572, 300, 16)
         self.lbl_autosave_status.setStyleSheet("font-size: 11px; color: #888;")
         self.lbl_autosave_status.setText("")
 
@@ -401,19 +401,19 @@ class MyWidget(QtWidgets.QWidget):
         self.label_list.setStyleSheet('font-size: 12px;')
 
         self.hideBox = QtWidgets.QCheckBox(self)
-        self.hideBox.move(1010, 78)
+        self.hideBox.move(1010, 76)
         self.hideBox.setText('Hide Box')
         self.hideBox.clicked.connect(lambda: self.hideBbox(self.hideBox))
 
         self.chk_show_preds = QtWidgets.QCheckBox(self)
-        self.chk_show_preds.move(1110, 78)
+        self.chk_show_preds.move(1110, 76)
         self.chk_show_preds.setText('Show preds')
         self.chk_show_preds.setChecked(True)
         self.chk_show_preds.clicked.connect(self.set_img_ratio)
 
         self.listwidget = QtWidgets.QListWidget(self)
         self.listwidget.addItems([])
-        self.listwidget.setGeometry(1010, 100, 430, 130)
+        self.listwidget.setGeometry(1010, 96, 430, 110)
         self.listwidget.setStyleSheet(STYLE_LIST_WIDGET)
         self.listwidget.clicked.connect(self.showObject)
         self.listwidget.currentRowChanged.connect(self._on_list_box_row_changed)
@@ -421,71 +421,71 @@ class MyWidget(QtWidgets.QWidget):
         self.listwidget.customContextMenuRequested.connect(self.on_context_menu_labimg)
 
         self._attr_panel = AttributePanel(self)
-        self._attr_panel.setGeometry(1010, 236, 430, 130)
+        self._attr_panel.setGeometry(1010, 212, 430, 170)
         self._attr_panel.values_changed.connect(self._on_attr_panel_changed)
         self._attr_panel.set_recalc_size_callback(self._on_recalc_size_tag_for_selection)
         self._attr_panel.set_enabled_editing(False)
 
         self.label_clear = QtWidgets.QPushButton(self)
         self.label_clear.setText('Delete all')
-        self.label_clear.setGeometry(1380, 370, 60, 20)
+        self.label_clear.setGeometry(1380, 386, 60, 20)
         self.label_clear.setStyleSheet(STYLE_BUTTON_SECONDARY)
         self.label_clear.clicked.connect(self.allbboxClear)
 
         ### paste_button ###
         self.btn_paste = QtWidgets.QPushButton(self)
         self.btn_paste.setText('Paste Image')
-        self.btn_paste.setGeometry(1010, 396, 110, 24)
+        self.btn_paste.setGeometry(1010, 410, 110, 24)
         self.btn_paste.setStyleSheet(STYLE_BUTTON_PRIMARY)
         self.btn_paste.setDisabled(True)
         self.btn_paste.clicked.connect(self.pasteImg)
 
         self.label_pasteimg = QtWidgets.QLabel(self)
         self.label_pasteimg.setText('Image')
-        self.label_pasteimg.setGeometry(1010, 424, 80, 20)
+        self.label_pasteimg.setGeometry(1010, 436, 80, 20)
         self.label_pasteimg.setStyleSheet('font-size: 12px;')
 
         self.Hflip = QtWidgets.QCheckBox(self)
-        self.Hflip.move(1060, 424)
+        self.Hflip.move(1060, 436)
         self.Hflip.setText('HorizontalFlip')
         self.Hflip.setDisabled(True)
         self.Hflip.clicked.connect(lambda: self.Hflippimg(self.Hflip))
 
-        self.white_canvas = QPixmap(100, 100)
+        self.white_canvas = QPixmap(80, 80)
         self.white_canvas.fill(QColor('#ffffff'))
         self.pmap_pasteimg = QtWidgets.QLabel(self)
-        self.pmap_pasteimg.setGeometry(1010, 448, 100, 100)
+        self.pmap_pasteimg.setGeometry(1010, 456, 80, 80)
         self.pmap_pasteimg.setStyleSheet('border: 1px solid #D3D3D3;')
         self.pmap_pasteimg.setPixmap(self.white_canvas)
 
         self.btn_chooseimg = QtWidgets.QPushButton(self)
         self.btn_chooseimg.setText('Choose')
-        self.btn_chooseimg.setGeometry(1010, 554, 50, 20)
+        self.btn_chooseimg.setGeometry(1010, 550, 50, 20)
         self.btn_chooseimg.setStyleSheet(STYLE_BUTTON_SECONDARY)
         self.btn_chooseimg.clicked.connect(self.chooseImg)
 
         self.btn_add = QtWidgets.QPushButton(self)
         self.btn_add.setText('Add')
-        self.btn_add.setGeometry(1065, 554, 50, 20)
+        self.btn_add.setGeometry(1065, 550, 50, 20)
         self.btn_add.setStyleSheet(STYLE_BUTTON_SECONDARY_DISABLED)
         self.btn_add.setDisabled(True)
         self.btn_add.clicked.connect(self.inputPimg)
 
         self.btn_reset = QtWidgets.QPushButton(self)
         self.btn_reset.setText('Reset')
-        self.btn_reset.setGeometry(1390, 554, 50, 20)
+        self.btn_reset.setGeometry(1390, 550, 50, 20)
         self.btn_reset.setStyleSheet(STYLE_BUTTON_SECONDARY)
         self.btn_reset.clicked.connect(self.resetVal)
 
         ### Paste_imgae_QListWidget ###
         self.pimg_list = QtWidgets.QLabel(self)
         self.pimg_list.setText('Paste Images')
-        self.pimg_list.setGeometry(1010, 578, 200, 20)
+        self.pimg_list.setGeometry(1010, 574, 200, 20)
         self.pimg_list.setStyleSheet('font-size: 12px;')
 
         self.pimglistwidget = QtWidgets.QListWidget(self)
         self.pimglistwidget.addItems([])
-        self.pimglistwidget.setGeometry(1010, 600, 430, 120)
+        self.pimglistwidget.setGeometry(1010, 596, 430, 74)
         self.pimglistwidget.setStyleSheet(STYLE_LIST_WIDGET)
         self.pimglistwidget.clicked.connect(self.showPimg)
         self.pimglistwidget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -493,7 +493,7 @@ class MyWidget(QtWidgets.QWidget):
 
         self.pimg_clear = QtWidgets.QPushButton(self)
         self.pimg_clear.setText('Delete all')
-        self.pimg_clear.setGeometry(1380, 724, 60, 20)
+        self.pimg_clear.setGeometry(1380, 674, 60, 20)
         self.pimg_clear.setStyleSheet(STYLE_BUTTON_SECONDARY)
         self.pimg_clear.clicked.connect(self.allpimgClear)
 
@@ -614,74 +614,74 @@ class MyWidget(QtWidgets.QWidget):
 
         self.btn_inputobj = QtWidgets.QPushButton(self)
         self.btn_inputobj.setText('Class mapping')
-        self.btn_inputobj.setGeometry(10, 60, 105, 24)
+        self.btn_inputobj.setGeometry(10, 58, 105, 24)
         self.btn_inputobj.setStyleSheet(STYLE_BUTTON_PRIMARY)
         self.btn_inputobj.setDisabled(True)
         self.btn_inputobj.clicked.connect(self.inputObj)
 
         self.btn_loadlab = QtWidgets.QPushButton(self)
         self.btn_loadlab.setText('Load Label')
-        self.btn_loadlab.setGeometry(10, 104, 105, 24)
+        self.btn_loadlab.setGeometry(10, 90, 105, 24)
         self.btn_loadlab.setStyleSheet(STYLE_BUTTON_PRIMARY)
         self.btn_loadlab.setDisabled(True)
         self.btn_loadlab.clicked.connect(self.loadLabel)
 
         self.btn_showlab = QtWidgets.QPushButton(self)
         self.btn_showlab.setText('Show Label')
-        self.btn_showlab.setGeometry(10, 134, 105, 24)
+        self.btn_showlab.setGeometry(10, 118, 105, 24)
         self.btn_showlab.setStyleSheet(STYLE_BUTTON_PRIMARY)
         self.btn_showlab.setDisabled(True)
         self.btn_showlab.clicked.connect(self.showLabel)
 
         self.btn_loadpred = QtWidgets.QPushButton(self)
         self.btn_loadpred.setText('Load preds')
-        self.btn_loadpred.setGeometry(10, 178, 105, 24)
+        self.btn_loadpred.setGeometry(10, 150, 105, 24)
         self.btn_loadpred.setStyleSheet(STYLE_BUTTON_PRIMARY)
         self.btn_loadpred.setDisabled(True)
         self.btn_loadpred.clicked.connect(self.load_predictions)
 
         self.pred_listwidget = QtWidgets.QListWidget(self)
-        self.pred_listwidget.setGeometry(10, 206, 105, 138)
+        self.pred_listwidget.setGeometry(10, 178, 105, 110)
         self.pred_listwidget.setStyleSheet('QListWidget::item{font-size:11px;}')
         self.pred_listwidget.setDisabled(True)
 
         self.btn_pred_accept = QtWidgets.QPushButton(self)
         self.btn_pred_accept.setText('Accept')
-        self.btn_pred_accept.setGeometry(10, 350, 50, 22)
+        self.btn_pred_accept.setGeometry(10, 292, 50, 22)
         self.btn_pred_accept.setStyleSheet(STYLE_BUTTON_SECONDARY)
         self.btn_pred_accept.setDisabled(True)
         self.btn_pred_accept.clicked.connect(self.accept_selected_prediction)
 
         self.btn_pred_reject = QtWidgets.QPushButton(self)
         self.btn_pred_reject.setText('Reject')
-        self.btn_pred_reject.setGeometry(64, 350, 50, 22)
+        self.btn_pred_reject.setGeometry(64, 292, 50, 22)
         self.btn_pred_reject.setStyleSheet(STYLE_BUTTON_SECONDARY)
         self.btn_pred_reject.setDisabled(True)
         self.btn_pred_reject.clicked.connect(self.reject_selected_prediction)
 
         self._tile_panel = TilePanel(self)
-        self._tile_panel.setGeometry(5, 385, 115, 130)
+        self._tile_panel.setGeometry(5, 322, 118, 170)
         self._tile_panel.tile_config_changed.connect(self._on_tile_config_changed)
         self._tile_panel.tile_index_changed.connect(self._on_tile_index_changed)
         self._tile_panel.tile_view_toggled.connect(self._on_tile_view_toggled)
 
         self.btn_saveimg = QtWidgets.QPushButton(self)
         self.btn_saveimg.setText('Save Image')
-        self.btn_saveimg.setGeometry(10, 852, 105, 24)
+        self.btn_saveimg.setGeometry(10, 504, 105, 24)
         self.btn_saveimg.setStyleSheet(STYLE_BUTTON_PRIMARY)
         self.btn_saveimg.setDisabled(True)
         self.btn_saveimg.clicked.connect(self.saveFile)
 
         self.btn_savelab = QtWidgets.QPushButton(self)
         self.btn_savelab.setText('Save Label')
-        self.btn_savelab.setGeometry(10, 880, 105, 24)
+        self.btn_savelab.setGeometry(10, 532, 105, 24)
         self.btn_savelab.setStyleSheet(STYLE_BUTTON_PRIMARY)
         self.btn_savelab.setDisabled(True)
         self.btn_savelab.clicked.connect(self.saveLabel)
 
         self.btn_close = QtWidgets.QPushButton(self)
         self.btn_close.setText('Quit')
-        self.btn_close.setGeometry(10, 916, 105, 24)
+        self.btn_close.setGeometry(10, 564, 105, 24)
         self.btn_close.setStyleSheet(STYLE_BUTTON_PRIMARY)
         self.btn_close.clicked.connect(self.closeFile)
 
@@ -690,62 +690,62 @@ class MyWidget(QtWidgets.QWidget):
         sw = 180
 
         self.label_adj_1 = QtWidgets.QLabel(self)
-        self.label_adj_1.setGeometry(sx, 448, 70, 14)
+        self.label_adj_1.setGeometry(sx, 456, 70, 14)
         self.label_adj_1.setText('Resize')
         self.label_adj_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.slider_1 = QtWidgets.QSlider(self)
         self.slider_1.setOrientation(Qt.Orientation.Horizontal)
-        self.slider_1.setGeometry(sx + 80, 448, sw, 16)
+        self.slider_1.setGeometry(sx + 80, 456, sw, 16)
         self.slider_1.setRange(0, 100)
         self.slider_1.setValue(50)
         self.slider_1.valueChanged.connect(self.controlpimg)
         self.label_val_1 = QtWidgets.QLabel(self)
-        self.label_val_1.setGeometry(sx + 265, 448, 50, 16)
+        self.label_val_1.setGeometry(sx + 265, 456, 50, 16)
         self.label_val_1.setText("100 %")
         self.label_val_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.label_adj_2 = QtWidgets.QLabel(self)
-        self.label_adj_2.setGeometry(sx, 470, 70, 14)
+        self.label_adj_2.setGeometry(sx, 480, 70, 14)
         self.label_adj_2.setText('Rotate')
         self.label_adj_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.slider_2 = QtWidgets.QSlider(self)
         self.slider_2.setOrientation(Qt.Orientation.Horizontal)
-        self.slider_2.setGeometry(sx + 80, 470, sw, 16)
+        self.slider_2.setGeometry(sx + 80, 480, sw, 16)
         self.slider_2.setRange(0, 360)
         self.slider_2.setValue(0)
         self.slider_2.valueChanged.connect(self.controlpimg)
         self.label_val_2 = QtWidgets.QLabel(self)
-        self.label_val_2.setGeometry(sx + 265, 470, 50, 16)
+        self.label_val_2.setGeometry(sx + 265, 480, 50, 16)
         self.label_val_2.setText('0 °')
         self.label_val_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.label_adj_3 = QtWidgets.QLabel(self)
-        self.label_adj_3.setGeometry(sx, 492, 70, 14)
+        self.label_adj_3.setGeometry(sx, 504, 70, 14)
         self.label_adj_3.setText('Brightness')
         self.label_adj_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.slider_3 = QtWidgets.QSlider(self)
         self.slider_3.setOrientation(Qt.Orientation.Horizontal)
-        self.slider_3.setGeometry(sx + 80, 492, sw, 16)
+        self.slider_3.setGeometry(sx + 80, 504, sw, 16)
         self.slider_3.setRange(0, 200)
         self.slider_3.setValue(100)
         self.slider_3.valueChanged.connect(self.controlpimg)
         self.label_val_3 = QtWidgets.QLabel(self)
-        self.label_val_3.setGeometry(sx + 265, 492, 50, 16)
+        self.label_val_3.setGeometry(sx + 265, 504, 50, 16)
         self.label_val_3.setText('100')
         self.label_val_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.label_adj_4 = QtWidgets.QLabel(self)
-        self.label_adj_4.setGeometry(sx, 514, 70, 14)
+        self.label_adj_4.setGeometry(sx, 528, 70, 14)
         self.label_adj_4.setText('Contrast')
         self.label_adj_4.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.slider_4 = QtWidgets.QSlider(self)
         self.slider_4.setOrientation(Qt.Orientation.Horizontal)
-        self.slider_4.setGeometry(sx + 80, 514, sw, 16)
+        self.slider_4.setGeometry(sx + 80, 528, sw, 16)
         self.slider_4.setRange(0, 200)
         self.slider_4.setValue(100)
         self.slider_4.valueChanged.connect(self.controlpimg)
         self.label_val_4 = QtWidgets.QLabel(self)
-        self.label_val_4.setGeometry(sx + 265, 514, 50, 16)
+        self.label_val_4.setGeometry(sx + 265, 528, 50, 16)
         self.label_val_4.setText('100')
         self.label_val_4.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -1157,11 +1157,11 @@ class MyWidget(QtWidgets.QWidget):
         self.paste_canvas = QPixmap.fromImage(pimg)
         if self.pasteimg_width < self.pasteimg_height:
             self.paste_canvas = self.paste_canvas.scaled(
-                int(100 * self.pasteimg_width / self.pasteimg_height), 100
+                int(80 * self.pasteimg_width / self.pasteimg_height), 80
             )
         else:
             self.paste_canvas = self.paste_canvas.scaled(
-                100, int(100 * self.pasteimg_height / self.pasteimg_width)
+                80, int(80 * self.pasteimg_height / self.pasteimg_width)
             )
         self.pmap_pasteimg.setPixmap(self.paste_canvas)
 
@@ -1451,7 +1451,7 @@ class MyWidget(QtWidgets.QWidget):
         context.addAction(self.action_labimgdelete)
         self.action_labimgrename.triggered.connect(self.bboxRename)
         self.action_labimgdelete.triggered.connect(self.bboxClear)
-        context.exec(self.mapToGlobal(pos + QPoint(1010, 100)))
+        context.exec(self.mapToGlobal(pos + QPoint(1010, 96)))
 
     def on_context_menu_pasteimg(self, pos):
         context = QtWidgets.QMenu(self)
@@ -1461,7 +1461,7 @@ class MyWidget(QtWidgets.QWidget):
         context.addAction(self.action_pimgdelete)
         self.action_pimgrename.triggered.connect(self.pimgRename)
         self.action_pimgdelete.triggered.connect(self.pimgClear)
-        context.exec(self.mapToGlobal(pos + QPoint(1010, 600)))
+        context.exec(self.mapToGlobal(pos + QPoint(1010, 596)))
 
     def newFile(self):
         filepath, filetype = QtWidgets.QFileDialog.getOpenFileName(

@@ -46,11 +46,11 @@ class TilePanel(QtWidgets.QGroupBox):
         form.addRow("Stride:", self.spin_stride)
         layout.addLayout(form)
 
-        row2 = QtWidgets.QHBoxLayout()
         self.chk_enabled = QtWidgets.QCheckBox("On")
         self.chk_enabled.toggled.connect(self._on_toggle)
-        row2.addWidget(self.chk_enabled)
+        layout.addWidget(self.chk_enabled)
 
+        row2 = QtWidgets.QHBoxLayout()
         self.btn_prev = QtWidgets.QPushButton("<")
         self.btn_prev.setFixedWidth(24)
         self.btn_prev.clicked.connect(self._go_prev)
