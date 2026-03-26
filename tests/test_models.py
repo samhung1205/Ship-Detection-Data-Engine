@@ -12,8 +12,8 @@ from sdde.models import ClassMapping, HBBBoxPx
 def test_class_mapping_default() -> None:
     m = ClassMapping.default_ship_mapping()
     assert m.nc == 4
-    assert m.id_to_name(0) == "Naval"
-    assert m.name_to_id("Dock") == 2
+    assert m.id_to_name(0) == "naval"
+    assert m.name_to_id("dock") == 2
 
 
 def test_hbb_to_yolo_norm() -> None:
@@ -34,4 +34,3 @@ if __name__ == "__main__":
     test_class_mapping_default()
     test_hbb_to_yolo_norm()
     print("OK")
-

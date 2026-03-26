@@ -41,6 +41,28 @@ class PasteRecord:
     )
 
 
+def bbox_from_legacy_paste_row(row: Sequence[object]) -> tuple[int, int, int, int]:
+    """
+    Extract origin-pixel bbox coords from a legacy paste row.
+
+    Supported row shapes:
+    - [x1, y1, x2, y2]
+    - [class_name, x1, y1, x2, y2]
+    """
+    if len(row) < 4:
+        raise ValueError("Paste bbox row must contain at least 4 values.")
+    start = 1 if len(row) >= 5 else 0
+    try:
+        return (
+            int(row[start]),
+            int(row[start + 1]),
+            int(row[start + 2]),
+            int(row[start + 3]),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Paste bbox row contains non-integer coordinates.") from exc
+
+
 def export_paste_records_json(records: Sequence[PasteRecord]) -> str:
     """Serialize paste records to a JSON string."""
     return json.dumps([asdict(r) for r in records], indent=2, ensure_ascii=False)

@@ -51,6 +51,15 @@ from .statistics import (
 )
 from .project_config import ProjectConfig, load_project_config, save_project_config
 from .autosave import has_autosave, read_autosave, remove_autosave, write_autosave
+from .document import AnnotationDocument
+from .document import AnnotationBoxState, AnnotationDocumentSnapshot
+from .paste_candidate import PasteCandidateSession
+from .paste_document import PasteDocument, PasteEntryState
+from .legacy_rows import (
+    annotations_from_legacy_rows,
+    class_mapping_from_object_list,
+    legacy_blocks_from_annotations,
+)
 
 __all__ = [
     "ClassMapping",
@@ -98,5 +107,13 @@ __all__ = [
     "read_autosave",
     "remove_autosave",
     "write_autosave",
+    "AnnotationBoxState",
+    "AnnotationDocument",
+    "AnnotationDocumentSnapshot",
+    "PasteCandidateSession",
+    "PasteDocument",
+    "PasteEntryState",
+    "annotations_from_legacy_rows",
+    "class_mapping_from_object_list",
+    "legacy_blocks_from_annotations",
 ]
-

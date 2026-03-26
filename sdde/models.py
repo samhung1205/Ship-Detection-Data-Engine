@@ -92,9 +92,9 @@ class ClassMapping:
 
     @classmethod
     def default_ship_mapping(cls) -> "ClassMapping":
-        # Must match prompt.md defaults.
+        # Must match the repository's current classes.yaml defaults.
         return cls(
-            names=["Naval", "Merchant", "Dock", "other_vessel"],
+            names=["naval", "merchant", "dock", "other_vessel"],
         )
 
     @property
@@ -175,4 +175,3 @@ class ImageAnnotation:
 
 # Backward-compatible alias name (prompt uses "annotation data")
 AnnotationAttributes = Dict[str, str]
-

@@ -4,6 +4,7 @@ import json
 
 from sdde.augmentation import (
     PasteRecord,
+    bbox_from_legacy_paste_row,
     export_paste_records_csv,
     export_paste_records_json,
 )
@@ -59,3 +60,20 @@ def test_export_empty() -> None:
     csv_text = export_paste_records_csv([])
     lines = csv_text.strip().splitlines()
     assert len(lines) == 1  # header only
+
+
+def test_bbox_from_legacy_paste_row_accepts_class_prefixed_row() -> None:
+    assert bbox_from_legacy_paste_row(["naval", 10, 20, 100, 200]) == (10, 20, 100, 200)
+
+
+def test_bbox_from_legacy_paste_row_accepts_plain_bbox_row() -> None:
+    assert bbox_from_legacy_paste_row([10, 20, 100, 200]) == (10, 20, 100, 200)
+
+
+def test_bbox_from_legacy_paste_row_rejects_non_numeric_bbox_values() -> None:
+    try:
+        bbox_from_legacy_paste_row(["naval", "x", 20, 100, 200])
+    except ValueError as exc:
+        assert "non-integer" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for malformed paste bbox row.")

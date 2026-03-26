@@ -7,6 +7,7 @@ from .models import ClassMapping, HBBAnnotation, HBBBoxPx, HBBBoxYoloNorm
 
 
 _ClsMode = Literal["class_id", "class_name"]
+_BBoxOrder = Literal["class_first", "coords_first"]
 
 
 def _format_number(v: float) -> str:
@@ -120,18 +121,22 @@ def export_bbox_txt(
     *,
     class_mapping: ClassMapping,
     cls_mode: _ClsMode = "class_id",
+    order: _BBoxOrder = "class_first",
     include_trailing_newline: bool = True,
 ) -> str:
     """
     Export absolute bbox coordinates as txt.
 
     Format:
-      cls x1 y1 x2 y2
+      - ``class_first``: ``cls x1 y1 x2 y2``
+      - ``coords_first``: ``x1 y1 x2 y2 cls``
     where (x1,y1) is top-left and (x2,y2) is bottom-right in px.
     """
     class_mapping.validate()
     if cls_mode not in ("class_id", "class_name"):
         raise ValueError("cls_mode must be 'class_id' or 'class_name'")
+    if order not in ("class_first", "coords_first"):
+        raise ValueError("order must be 'class_first' or 'coords_first'")
 
     lines: List[str] = []
     for ann in annotations:
@@ -150,12 +155,21 @@ def export_bbox_txt(
         x2 = ann.bbox_px.x2
         y2 = ann.bbox_px.y2
 
-        lines.append(
-            f"{cls_val} {_format_number(x1)} {_format_number(y1)} {_format_number(x2)} {_format_number(y2)}"
-        )
+        if order == "class_first":
+            line = (
+                f"{cls_val} "
+                f"{_format_number(x1)} {_format_number(y1)} "
+                f"{_format_number(x2)} {_format_number(y2)}"
+            )
+        else:
+            line = (
+                f"{_format_number(x1)} {_format_number(y1)} "
+                f"{_format_number(x2)} {_format_number(y2)} {cls_val}"
+            )
+
+        lines.append(line)
 
     out = "\n".join(lines)
     if include_trailing_newline and out:
         out += "\n"
     return out
-

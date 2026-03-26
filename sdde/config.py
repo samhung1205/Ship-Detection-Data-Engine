@@ -1,3 +1,10 @@
+"""
+Legacy compatibility helpers for YOLO-style ``data.yaml`` files.
+
+The primary class-mapping path in this repository is ``classes.yaml`` via
+``ClassMappingDialog``.  This module remains only so older ``data.yaml`` files
+can still be parsed when needed.
+"""
 from __future__ import annotations
 
 import ast
@@ -17,7 +24,7 @@ def _extract_yaml_list_from_name_field(text: str) -> Optional[List[str]]:
     Extract YAML-ish inline list from the `name:` field.
 
     Supports the simple form used in this repo, e.g.
-      name: ['Naval', 'Merchant']
+      name: ['naval', 'merchant']
     """
 
     m = _NAME_LINE_RE.search(text)
@@ -53,7 +60,7 @@ def _extract_yaml_list_from_name_field(text: str) -> Optional[List[str]]:
 
 def class_mapping_from_data_yaml(path: str | Path) -> ClassMapping:
     """
-    Build a ClassMapping from `data.yaml` used by YOLO-style datasets.
+    Build a ClassMapping from legacy ``data.yaml`` used by YOLO-style datasets.
     """
 
     p = Path(path)
@@ -76,4 +83,3 @@ def class_mapping_from_data_yaml(path: str | Path) -> ClassMapping:
     mapping = ClassMapping(names=names)
     mapping.validate()
     return mapping
-

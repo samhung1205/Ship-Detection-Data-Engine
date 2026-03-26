@@ -49,11 +49,28 @@ def test_bbox_export_class_mode() -> None:
     assert out_id.strip() == "2 10 20 30 40"
 
     out_name = export_bbox_txt([ann], class_mapping=mapping, cls_mode="class_name")
-    assert out_name.strip() == "Dock 10 20 30 40"
+    assert out_name.strip() == "dock 10 20 30 40"
+
+
+def test_bbox_export_coords_first_order() -> None:
+    mapping = ClassMapping.default_ship_mapping()
+
+    ann = HBBAnnotation(
+        class_id=2,
+        bbox_px=HBBBoxPx(x1=10, y1=20, x2=30, y2=40),
+    )
+
+    out = export_bbox_txt(
+        [ann],
+        class_mapping=mapping,
+        cls_mode="class_id",
+        order="coords_first",
+    )
+    assert out.strip() == "10 20 30 40 2"
 
 
 if __name__ == "__main__":
     test_yolo_import_export_roundtrip()
     test_bbox_export_class_mode()
+    test_bbox_export_coords_first_order()
     print("OK")
-

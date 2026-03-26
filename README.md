@@ -32,6 +32,15 @@ pip install -r requirements.txt
 python GUI.py
 ```
 
+## 重構前建議先驗證
+
+- 第一次實際操作專案時，建議先照 [`docs/manual_smoke_test.md`](docs/manual_smoke_test.md) 跑完整手動 smoke test
+- 如果要碰 `main_window.py` 的狀態拆分或同步邏輯，先看 [`docs/state_refactor_inventory.md`](docs/state_refactor_inventory.md)
+- 如果準備整理 copy-paste augmentation 流程，先看 [`docs/paste_refactor_inventory.md`](docs/paste_refactor_inventory.md)
+- 如果要快速回顧這一輪重構成果，請看 [`docs/refactor_summary.md`](docs/refactor_summary.md)
+- 後續每次修改後，至少先跑一次 `pytest -q`
+- 如果修改影響 `main_window.py`、匯入匯出、prediction、autosave 或 project config，建議再補跑 smoke test 受影響段落
+
 ---
 
 ## 操作說明
@@ -46,8 +55,10 @@ python GUI.py
 
 - 點擊左側 **Class mapping** 按鈕，或選單 **File → Class mapping** (`Ctrl+I`)
 - 開啟對話框可新增、刪除、編輯類別（class_id / class_name / super_category）
+- 主路徑為 `ClassMappingDialog + classes.yaml`
 - 儲存後更新 `classes.yaml`，YOLO 匯入匯出的 class index 即依此對照
 - 啟動時自動從工作目錄讀取 `classes.yaml`
+- `input_window.py` 與 `data.yaml` 僅保留 legacy compatibility，不再是主流程
 
 ### 3. 標註 HBB（水平外接矩形框）
 
@@ -55,6 +66,7 @@ python GUI.py
 - 在畫布上點擊確定框的第一角，再點擊對角完成框
 - 彈出對話框選擇類別名稱
 - 標註會即時顯示在 Box Labels 列表和畫布上（綠色框線）
+- 選取 `Box Labels` 中的既有框後，可在畫布上拖曳框內部移動，或拖曳四個角點手動縮放
 - 勾選 **Hide Box** 可暫時隱藏所有框
 - 右鍵點擊列表項目可 **Rename**（改類別）或 **Delete**（刪除單筆）
 - **Delete all** 按鈕清除所有標註
@@ -77,7 +89,7 @@ python GUI.py
 - **Load Label**：選單或左側按鈕，讀取 YOLO HBB 格式 txt（`class_id xc yc w h`，歸一化座標）
 - **Save Label**：彈出對話框，選擇格式：
   - **YOLO(v5~10)**：歸一化中心座標 `class_id xc yc w h`
-  - **Bounding Boxes**：絕對座標 `x1 y1 x2 y2 class_id`
+  - **Bounding Boxes**：絕對座標 `class_id x1 y1 x2 y2`
 - **Show Label**：在新視窗中預覽當前標註疊圖
 
 ### 6. Prediction Overlay（模型預測疊圖）
@@ -199,14 +211,29 @@ GUI/
 ├── GUI.py                          # 程式進入點
 ├── requirements.txt                # Python 依賴
 ├── classes.yaml                    # 類別定義檔（啟動時自動讀取）
+├── data.yaml                       # legacy compatibility only（舊 YOLO data.yaml 路徑）
 ├── project_config.yaml             # 專案設定檔（可選，啟動時自動讀取）
+├── docs/
+│   ├── manual_smoke_test.md        #   重構前後共用的手動回歸清單
+│   ├── paste_refactor_inventory.md #   copy-paste augmentation 狀態盤點與拆分前保護清單
+│   ├── refactor_summary.md         #   本輪重構成果摘要 / 交接筆記
+│   └── state_refactor_inventory.md #   main_window 狀態盤點與拆分前保護清單
 │
 ├── gui/                            # GUI 層（PyQt6 widgets + controllers）
 │   ├── __init__.py                 #   匯出 MyWidget
-│   ├── main_window.py              #   主視窗（MyWidget），所有 UI 邏輯的中樞
+│   ├── main_window.py              #   主視窗（MyWidget），負責 orchestration 與剩餘 UI glue
 │   ├── canvas_widget.py            #   ImageCanvasWidget — 可捲動畫布、縮放重繪
 │   ├── canvas_utils.py             #   繪圖函式：bbox / paste / prediction / tile overlay
 │   ├── annotation_controller.py    #   Undo/Redo command stack（Add/Remove/Rename/Clear/Bulk）
+│   ├── annotation_actions_controller.py # GT add / rename / delete / clear action entry controller
+│   ├── annotation_draw_controller.py # GT canvas drawing interaction controller
+│   ├── annotation_list_view.py     #   GT list / count 的 UI 投影 adapter
+│   ├── annotation_list_controller.py #  GT list selection / context menu controller
+│   ├── annotation_preview_controller.py # GT row highlight preview controller
+│   ├── annotation_workspace_controller.py # GT selection + attr-panel sync controller
+│   ├── paste_candidate_controller.py # Paste asset load / transform / placement controller
+│   ├── paste_actions_controller.py #   Paste add / rename / delete / clear action entry controller
+│   ├── paste_preview_controller.py #   Paste row highlight preview controller
 │   ├── attribute_panel.py          #   右側屬性編輯面板（size_tag / crowded / difficulty / scene）
 │   ├── class_mapping_service.py    #   classes.yaml 讀寫 + ClassCatalog 管理
 │   ├── tile_panel.py               #   左下方 Tile view 面板（Size/Stride/Enable/Nav）
@@ -217,7 +244,7 @@ GUI/
 │       ├── class_mapping_dialog.py #     Class mapping 編輯對話框
 │       ├── error_analysis_dialog.py#     Error analysis 結果表格 + CSV 匯出
 │       ├── statistics_dialog.py    #     Dataset statistics 四分頁表格 + JSON/CSV 匯出
-│       ├── input_window.py         #     （legacy）物件名稱輸入
+│       ├── input_window.py         #     legacy compatibility only（不屬於主流程）
 │       ├── showlab_window.py       #     Show Label 預覽視窗
 │       ├── saveimg_window.py       #     Save Image 對話框
 │       └── savelab_window.py       #     Save Label 格式選擇對話框
@@ -225,10 +252,12 @@ GUI/
 ├── sdde/                           # 資料模型與服務層（純 Python，不依賴 PyQt6）
 │   ├── __init__.py                 #   統一匯出所有 public API
 │   ├── models.py                   #   核心資料模型：HBBBoxPx / HBBBoxYoloNorm / HBBAnnotation / ImageAnnotation
-│   ├── config.py                   #   YAML name list 讀取
+│   ├── document.py                 #   GT annotation Document 骨架（集中 legacy 平行 lists）
+│   ├── config.py                   #   legacy data.yaml 相容解析
 │   ├── class_catalog.py            #   ClassCatalog / ClassInfo — 類別目錄管理
 │   ├── classes_yaml.py             #   classes.yaml 格式讀寫
 │   ├── import_export.py            #   YOLO HBB parse / export、bbox txt export
+│   ├── legacy_rows.py              #   legacy GUI row 格式 <-> HBBAnnotation 轉接
 │   ├── metadata_export.py          #   per-image annotation metadata → JSON / CSV
 │   ├── attributes.py               #   研究屬性欄位定義、size_tag 計算（COCO 閾值）
 │   ├── prediction.py               #   PredictionRecord、YOLO prediction 解析（含 confidence）
@@ -236,14 +265,30 @@ GUI/
 │   ├── statistics.py               #   dataset 統計分析（class / size / bbox distributions）、JSON/CSV
 │   ├── tile.py                     #   TileConfig / TileRect / compute_tile_grid / 座標轉換
 │   ├── augmentation.py             #   PasteRecord（copy-paste transform 紀錄）、JSON/CSV 匯出
+│   ├── paste_candidate.py          #   in-progress paste candidate session（暫存 transform / placement state）
+│   ├── paste_document.py           #   committed paste state Document（集中 legacy 平行 lists）
 │   ├── project_config.py           #   ProjectConfig dataclass、YAML load / save
 │   └── autosave.py                 #   autosave write / read / remove（JSON sidecar）
 │
 └── tests/                          # 單元測試（pytest）
     ├── test_models.py              #   HBBBoxPx / HBBAnnotation 測試
+    ├── test_config.py              #   data.yaml 相容解析測試
     ├── test_import_export.py       #   YOLO parse / export round-trip 測試
+    ├── test_legacy_rows.py         #   legacy row 與 HBBAnnotation 轉接測試
     ├── test_classes_yaml.py        #   classes.yaml 讀寫 round-trip
-    ├── test_annotation_controller.py#  Undo / Redo command stack 測試
+    ├── test_annotation_controller.py #  Undo / Redo command stack 測試
+    ├── test_annotation_actions_controller.py # GT action entry controller 測試
+    ├── test_annotation_draw_controller.py # GT canvas drawing controller 測試
+    ├── test_annotation_list_view.py #  GT list / count projection 測試
+    ├── test_annotation_list_controller.py # GT list interaction controller 測試
+    ├── test_annotation_preview_controller.py # GT highlight preview controller 測試
+    ├── test_annotation_workspace_controller.py # GT workspace controller 測試
+    ├── test_paste_candidate_controller.py # Paste candidate controller 測試
+    ├── test_paste_actions_controller.py # Paste action entry controller 測試
+    ├── test_paste_preview_controller.py # Paste highlight preview controller 測試
+    ├── test_paste_candidate.py     #   Paste candidate session 測試
+    ├── test_paste_document.py      #   Paste document API / 對齊保護測試
+    ├── test_document.py            #   GT document API / 對齊保護測試
     ├── test_attributes.py          #   size_tag 計算、default_attributes 測試
     ├── test_metadata_export.py     #   build_annotation_records + JSON/CSV 匯出
     ├── test_prediction.py          #   YOLO prediction 解析（含/不含 confidence）
@@ -261,20 +306,24 @@ GUI/
 
 ```bash
 pip install pytest
-python -m pytest tests/ -q
+pytest -q
 ```
 
-目前共 54 個測試，涵蓋所有 `sdde/` 模組的核心邏輯。
+目前共 128 個測試，涵蓋所有 `sdde/` 模組的核心邏輯、legacy `data.yaml` 相容解析、GUI 與 service layer 之間的 row adapter、annotation controller 的狀態對齊保護、GT / paste document API、paste candidate session，以及 GT 與 paste 的 action / draw / list / preview / workspace / candidate controllers，其中也包含 paste payload 在含有 Qt `QImage` 物件時的提交回歸保護。
+如果準備進行重構，請再搭配 [`docs/manual_smoke_test.md`](docs/manual_smoke_test.md) 的手動 smoke test 清單一起回歸。
 
 ---
 
 ## 架構設計原則
 
 1. **資料與 UI 分離** — `sdde/` 是純 Python 資料層，不依賴 PyQt6；`gui/` 是 UI 層，呼叫 `sdde/` 的 API
-2. **Command pattern** — 所有標註操作透過 `annotation_controller.py` 的 command stack，支援 Undo/Redo
-3. **Tile 是視角不是資料** — tile 模式只影響畫布顯示，所有 annotation 始終寫回全圖座標
-4. **Prediction 是獨立資料層** — prediction 疊在 GT 之上顯示，Accept 才轉為正式標註
-5. **Autosave 是 sidecar** — 存在 `.autosave/` 目錄下的 JSON，不干擾原始 label 檔
+2. **Class mapping 單一路徑** — 主流程使用 `ClassMappingDialog + classes.yaml`；`InputWindow + data.yaml` 只保留 legacy compatibility
+3. **Command pattern** — 所有標註操作透過 `annotation_controller.py` 的 command stack，支援 Undo/Redo
+4. **Label IO 單一來源** — GUI 載入/儲存 label 會經過 `sdde/import_export.py`，避免 UI 與 service layer 各自維護一份格式邏輯
+5. **Tile 是視角不是資料** — tile 模式只影響畫布顯示，所有 annotation 始終寫回全圖座標
+6. **Prediction 是獨立資料層** — prediction 疊在 GT 之上顯示，Accept 才轉為正式標註
+7. **Autosave 是 sidecar** — 存在 `.autosave/` 目錄下的 JSON，不干擾原始 label 檔
+8. **Paste state 分層收斂** — 已提交的 paste state 已集中到 `sdde/paste_document.py`，編輯中的 candidate / placement state 已集中到 `sdde/paste_candidate.py`，並由 `paste_candidate_controller.py` / `paste_actions_controller.py` / `paste_preview_controller.py` 操作，避免 `main_window.py` 直接持有過多平行欄位
 
 ---
 
