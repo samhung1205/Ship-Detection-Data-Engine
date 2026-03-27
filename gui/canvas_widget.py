@@ -32,12 +32,16 @@ class CanvasImageLabel(QtWidgets.QLabel):
         self.setCursor(Qt.CursorShape.CrossCursor)
         self._move_handler: MouseEventHandler = None
         self._press_handler: MouseEventHandler = None
+        self._release_handler: MouseEventHandler = None
 
     def set_move_handler(self, fn: MouseEventHandler) -> None:
         self._move_handler = fn
 
     def set_press_handler(self, fn: MouseEventHandler) -> None:
         self._press_handler = fn
+
+    def set_release_handler(self, fn: MouseEventHandler) -> None:
+        self._release_handler = fn
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._move_handler is not None:
@@ -50,6 +54,12 @@ class CanvasImageLabel(QtWidgets.QLabel):
             self._press_handler(event)
         else:
             super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._release_handler is not None:
+            self._release_handler(event)
+        else:
+            super().mouseReleaseEvent(event)
 
 
 class ImageCanvasWidget(QtWidgets.QWidget):
@@ -153,3 +163,6 @@ class ImageCanvasWidget(QtWidgets.QWidget):
 
     def set_mouse_press_handler(self, fn: MouseEventHandler) -> None:
         self.image_label.set_press_handler(fn)
+
+    def set_mouse_release_handler(self, fn: MouseEventHandler) -> None:
+        self.image_label.set_release_handler(fn)

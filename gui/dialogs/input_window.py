@@ -1,5 +1,9 @@
 """
-Input class dialog for managing object names.
+Legacy compatibility dialog for writing YOLO-style ``data.yaml``.
+
+The main class-mapping workflow now uses ``ClassMappingDialog`` +
+``classes.yaml``.  This dialog is kept only for compatibility with the old
+``data.yaml`` path.
 """
 from PyQt6 import QtWidgets
 from PyQt6.QtGui import QAction
@@ -10,9 +14,11 @@ from ..constants import STYLE_BUTTON_SECONDARY, STYLE_LIST_WIDGET
 
 
 class InputWindow(QtWidgets.QWidget):
+    """Legacy-only editor for the old ``data.yaml`` compatibility path."""
+
     def __init__(self, main_widget: 'MyWidget', is_confirm_quit: bool = True):
         super().__init__()
-        self.setWindowTitle('Input Class')
+        self.setWindowTitle('Input Class (Legacy compatibility)')
         self.resize(300, 240)
         self.main_widget = main_widget
         self.is_confirm_quit = is_confirm_quit
@@ -57,9 +63,10 @@ class InputWindow(QtWidgets.QWidget):
         self.btn_delete.clicked.connect(self.clearAll)
 
         self.btn_save = QtWidgets.QPushButton(self)
-        self.btn_save.setText('Save')
+        self.btn_save.setText('Save legacy YAML')
         self.btn_save.setGeometry(230, 150, 60, 20)
         self.btn_save.setStyleSheet(STYLE_BUTTON_SECONDARY)
+        self.btn_save.setToolTip('Compatibility only. Main path uses classes.yaml.')
         self.btn_save.clicked.connect(self.save_yaml)
 
         self.btn_ok = QtWidgets.QPushButton(self)
@@ -196,6 +203,7 @@ class InputWindow(QtWidgets.QWidget):
             self.main_widget.object_list.clear()
 
     def save_yaml(self):
+        """Write the legacy ``data.yaml`` compatibility format."""
         filePath, filterType = QtWidgets.QFileDialog.getSaveFileName(
             self, directory='data.yaml', filter='YAML(*.yaml)'
         )

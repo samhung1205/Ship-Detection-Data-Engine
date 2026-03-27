@@ -1,9 +1,13 @@
 """
 Save label dialog with format selection.
 """
+from pathlib import Path
+
 from PyQt6 import QtWidgets
 
 from sdde.autosave import remove_autosave
+from sdde.import_export import export_bbox_txt, export_yolo_hbb_txt
+from sdde.legacy_rows import annotations_from_legacy_rows, class_mapping_from_object_list
 
 
 class SavelabWindow(QtWidgets.QWidget):
@@ -22,7 +26,7 @@ class SavelabWindow(QtWidgets.QWidget):
         self.format = 'JPG'
 
         self.box_format = QtWidgets.QComboBox(self)
-        self.box_format.addItems(['YOLO(v5~10)', 'Bounding Boxes'])
+        self.box_format.addItems(['YOLO', 'Bounding Boxes'])
         self.box_format.setGeometry(10, 30, 150, 30)
 
         self.btn_ok = QtWidgets.QPushButton(self)
@@ -53,36 +57,44 @@ class SavelabWindow(QtWidgets.QWidget):
 
     def saveLabel(self):
         m = self.main_widget
-        default_name = m.imgfilePath.split('/')[-1][:-4] if m.imgfilePath else 'labels'
+        default_name = Path(m.imgfilePath).stem if m.imgfilePath else 'labels'
         self.format = self.box_format.currentText()
-        if self.format == 'YOLO(v5~10)':
-            filePath, filterType = QtWidgets.QFileDialog.getSaveFileName(
-                self, directory=default_name + '.txt', filter='TXT(*.txt)'
+        try:
+            mapping = class_mapping_from_object_list(m.object_list)
+            annotations = annotations_from_legacy_rows(
+                m.real_data + m.real_pimg_data,
+                object_list=m.object_list,
             )
-            if filePath:
-                with open(filePath, 'w') as file:
-                    for data in m.real_data + m.real_pimg_data:
-                        name, x1, y1, x2, y2 = data
-                        numobj = m.object_list.index(name)
-                        n_x = (x1 + x2) / 2.0 / m.origin_width
-                        n_y = (y1 + y2) / 2.0 / m.origin_height
-                        n_w = (x2 - x1) / m.origin_width
-                        n_h = (y2 - y1) / m.origin_height
-                        file.write('%s %s %s %s %s\n' % (numobj, n_x, n_y, n_w, n_h))
-                self._on_save_success()
-                self.close()
-        else:
-            filePath, filterType = QtWidgets.QFileDialog.getSaveFileName(
-                self, directory=default_name + '_bbox.txt', filter='TXT(*.txt)'
-            )
-            if filePath:
-                with open(filePath, 'w') as file:
-                    for data in m.real_data + m.real_pimg_data:
-                        name, x1, y1, x2, y2 = data
-                        numobj = m.object_list.index(name)
-                        file.write('%s %s %s %s %s\n' % (x1, y1, x2, y2, numobj))
-                self._on_save_success()
-                self.close()
+
+            if self.format == 'YOLO':
+                filePath, filterType = QtWidgets.QFileDialog.getSaveFileName(
+                    self, directory=default_name + '.txt', filter='TXT(*.txt)'
+                )
+                if not filePath:
+                    return
+                body = export_yolo_hbb_txt(
+                    annotations,
+                    class_mapping=mapping,
+                    image_w=m.origin_width,
+                    image_h=m.origin_height,
+                )
+            else:
+                filePath, filterType = QtWidgets.QFileDialog.getSaveFileName(
+                    self, directory=default_name + '_bbox.txt', filter='TXT(*.txt)'
+                )
+                if not filePath:
+                    return
+                body = export_bbox_txt(
+                    annotations,
+                    class_mapping=mapping,
+                    cls_mode='class_id',
+                )
+
+            Path(filePath).write_text(body, encoding='utf-8')
+            self._on_save_success()
+            self.close()
+        except (OSError, ValueError, IndexError) as e:
+            QtWidgets.QMessageBox.critical(self, 'Save failed', str(e))
 
     def _on_save_success(self) -> None:
         if self.main_widget.imgfilePath:

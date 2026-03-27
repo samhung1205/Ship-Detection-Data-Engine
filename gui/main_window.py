@@ -5,10 +5,9 @@ from pathlib import Path
 
 from PyQt6 import QtWidgets
 from PyQt6.QtGui import (
-    QAction, QPixmap, QImage, QPainter, QPen, QColor, QCloseEvent,
+    QAction, QPixmap, QImage, QColor, QCloseEvent,
 )
-from PyQt6.QtCore import Qt, QRect, QPoint, QTimer
-import numpy as np
+from PyQt6.QtCore import Qt, QRect, QTimer
 import cv2
 
 from .constants import (
@@ -17,16 +16,19 @@ from .constants import (
     STYLE_BUTTON_SECONDARY_DISABLED,
     STYLE_LIST_WIDGET,
 )
-from .canvas_utils import draw_bboxes_on_canvas, draw_paste_images_on_canvas
+from .canvas_utils import draw_paste_images_on_canvas
+from .annotation_actions_controller import AnnotationActionsController
+from .annotation_draw_controller import AnnotationDrawController
+from .annotation_edit_controller import AnnotationEditController
+from .annotation_list_controller import AnnotationListController
+from .annotation_preview_controller import AnnotationPreviewController
+from .annotation_list_view import AnnotationListView
+from .paste_candidate_controller import PasteCandidateController
+from .paste_actions_controller import PasteActionsController
+from .paste_preview_controller import PastePreviewController
+from .annotation_workspace_controller import AnnotationWorkspaceController
 from .canvas_widget import ImageCanvasWidget
-from .annotation_controller import (
-    AddBoxCommand,
-    AnnotationController,
-    BulkAppendBoxesCommand,
-    ClearAllBoxesCommand,
-    RemoveBoxCommand,
-    RenameBoxCommand,
-)
+from .annotation_controller import AnnotationController
 from sdde.class_catalog import ClassCatalog
 
 from .class_mapping_service import load_class_catalog
@@ -34,11 +36,7 @@ from .attribute_panel import AttributePanel
 from .dialogs import ClassMappingDialog, ErrorAnalysisDialog, StatisticsDialog, ShowlabWindow, SaveimgWindow, SavelabWindow
 from .tile_panel import TilePanel
 from sdde.tile import TileConfig, TileRect, compute_tile_grid
-from sdde.metadata_export import (
-    build_annotation_records,
-    export_annotations_csv,
-    export_annotations_json,
-)
+from sdde.metadata_export import export_annotations_csv, export_annotations_json
 from sdde.prediction import (
     STATUS_EDITED,
     STATUS_PREDICTED,
@@ -46,48 +44,118 @@ from sdde.prediction import (
 )
 from sdde.augmentation import (
     PasteRecord,
+    bbox_from_legacy_paste_row,
     export_paste_records_csv,
     export_paste_records_json,
 )
 from sdde.project_config import ProjectConfig, load_project_config, save_project_config
 from sdde.autosave import has_autosave, read_autosave, remove_autosave, write_autosave
+from sdde.document import AnnotationDocument
+from sdde.paste_candidate import PasteCandidateSession
+from sdde.paste_document import PasteDocument
+from sdde.import_export import import_yolo_hbb_label_file
+from sdde.legacy_rows import class_mapping_from_object_list, legacy_blocks_from_annotations
 
 
 class MyWidget(QtWidgets.QWidget):
     def __init__(self, is_confirm_quit: bool = True):
         super().__init__()
         self.setWindowTitle('Ship Detection Data Engine')
-        self.resize(1460, 720)
+        self.resize(1460, 760)
         self.setUpdatesEnabled(True)
         self.is_confirm_quit = is_confirm_quit
-        self.x, self.y = None, None
-        self.last_x, self.last_y = None, None
-        self.ith = None
         self.object_list = []
-        self.data = []
-        self.real_data = []
-        self.pimg_data = []
-        self.paste_images = []
-        self.real_pimg_data = []
+        self._gt_document = AnnotationDocument()
+        self._paste_candidate = PasteCandidateSession()
+        self._paste_document = PasteDocument()
         self.imgfilePath = ''
-        self.box_attributes: list[dict] = []
         self.predictions: list = []
         self._tile_grid: list[TileRect] = []
-        self.paste_records: list[PasteRecord] = []
-        self._current_asset_path: str = ""
         self._project_config = ProjectConfig()
         self._autosave_timer = QTimer(self)
         self._autosave_timer.timeout.connect(self._do_autosave)
+        self._annotation_controller = AnnotationController(self)
         self.ui()
         self.adjustUi()
         self._bootstrap_class_catalog()
-        self._annotation_controller = AnnotationController(self)
         self._try_load_default_project_config()
 
     @property
     def canvas(self):
         """Current display pixmap (scaled + overlays); owned by ImageCanvasWidget."""
         return self._image_canvas.canvas
+
+    @property
+    def gt_document(self) -> AnnotationDocument:
+        return self._gt_document
+
+    @property
+    def gt_list_view(self) -> AnnotationListView:
+        return self._gt_list_view
+
+    @property
+    def paste_document(self) -> PasteDocument:
+        return self._paste_document
+
+    @property
+    def paste_candidate(self) -> PasteCandidateSession:
+        return self._paste_candidate
+
+    @property
+    def data(self) -> list[list]:
+        return self._gt_document.data
+
+    @data.setter
+    def data(self, rows) -> None:
+        self._gt_document.replace(data=rows)
+
+    @property
+    def real_data(self) -> list[list]:
+        return self._gt_document.real_data
+
+    @real_data.setter
+    def real_data(self, rows) -> None:
+        self._gt_document.replace(real_data=rows)
+
+    @property
+    def box_attributes(self) -> list[dict[str, str]]:
+        return self._gt_document.box_attributes
+
+    @box_attributes.setter
+    def box_attributes(self, attrs) -> None:
+        self._gt_document.replace(box_attributes=attrs)
+
+    @property
+    def pimg_data(self) -> list[list]:
+        return self._paste_document.pimg_data
+
+    @pimg_data.setter
+    def pimg_data(self, rows) -> None:
+        self._paste_document.replace(pimg_data=rows)
+
+    @property
+    def real_pimg_data(self) -> list[list]:
+        return self._paste_document.real_pimg_data
+
+    @real_pimg_data.setter
+    def real_pimg_data(self, rows) -> None:
+        self._paste_document.replace(real_pimg_data=rows)
+
+    @property
+    def paste_images(self) -> list:
+        return self._paste_document.paste_images
+
+    @paste_images.setter
+    def paste_images(self, rows) -> None:
+        self._paste_document.replace(paste_images=rows)
+
+    @property
+    def paste_records(self) -> list[PasteRecord]:
+        return self._paste_document.paste_records
+
+    @paste_records.setter
+    def paste_records(self, rows) -> None:
+        self._paste_document.replace(paste_records=rows)
 
     def _on_annotation_undo(self) -> None:
         self._annotation_controller.undo()
@@ -114,7 +182,7 @@ class MyWidget(QtWidgets.QWidget):
                 pass
 
     def _enable_tools_after_classes_ready(self) -> None:
-        """Same enable set as legacy InputWindow after saving class names."""
+        """Enable tools after class mapping is ready; kept compatible with legacy flow."""
         self.btn_inputobj.setDisabled(False)
         self.action_input.setDisabled(False)
         self.btn_label.setDisabled(False)
@@ -198,11 +266,9 @@ class MyWidget(QtWidgets.QWidget):
             r_row = [name, x1, y1, x2, y2]
             blocks.append((d_row, r_row, name))
         if blocks:
-            self._annotation_controller.apply(BulkAppendBoxesCommand(blocks))
+            self._gt_actions.append_blocks(blocks)
         if ba:
-            for i, attr in enumerate(ba):
-                if i < len(self.box_attributes):
-                    self.box_attributes[i] = dict(attr)
+            self.gt_document.apply_box_attributes(ba)
         remove_autosave(image_path)
         self._update_autosave_status("Restored from autosave")
 
@@ -234,60 +300,14 @@ class MyWidget(QtWidgets.QWidget):
         except OSError as e:
             QtWidgets.QMessageBox.critical(self, "Save failed", str(e))
 
-    def append_box_attributes_row(self) -> None:
-        """Append default attributes + auto size_tag for last real_data row (undo stack calls this)."""
-        from sdde.attributes import compute_size_tag, default_attributes_dict
-
-        i = len(self.real_data) - 1
-        if i < 0:
-            return
-        row = self.real_data[i]
-        d = default_attributes_dict()
-        x1, y1, x2, y2 = (float(row[1]), float(row[2]), float(row[3]), float(row[4]))
-        d["size_tag"] = compute_size_tag(x1, y1, x2, y2)
-        self.box_attributes.append(d)
-
-    def _on_list_box_row_changed(self, row: int) -> None:
-        self._refresh_attribute_panel_for_row(row)
-
-    def _refresh_attribute_panel_for_row(self, row: int) -> None:
-        from sdde.attributes import default_attributes_dict
-
-        if row < 0 or row >= len(self.box_attributes):
-            self._attr_panel.set_enabled_editing(False)
-            self._attr_panel.load_from_dict(default_attributes_dict())
-            return
-        self._attr_panel.set_enabled_editing(True)
-        self._attr_panel.load_from_dict(self.box_attributes[row])
-
-    def _on_attr_panel_changed(self) -> None:
-        r = self.listwidget.currentRow()
-        if r < 0 or r >= len(self.box_attributes):
-            return
-        self.box_attributes[r] = self._attr_panel.to_dict()
-
-    def _on_recalc_size_tag_for_selection(self) -> None:
-        r = self.listwidget.currentRow()
-        if r < 0 or r >= len(self.real_data) or r >= len(self.box_attributes):
-            return
-        from sdde.attributes import compute_size_tag
-
-        row = self.real_data[r]
-        x1, y1, x2, y2 = (float(row[1]), float(row[2]), float(row[3]), float(row[4]))
-        st = compute_size_tag(x1, y1, x2, y2)
-        self._attr_panel.combo_size.setCurrentText(st)
-        self.box_attributes[r] = self._attr_panel.to_dict()
-
     def export_annotation_metadata_json(self) -> None:
         sup = {c.class_id: c.super_category for c in self.class_catalog.classes}
         ow = getattr(self, "origin_width", None)
         oh = getattr(self, "origin_height", None)
-        recs = build_annotation_records(
+        recs = self.gt_document.build_metadata_records(
             image_path=self.imgfilePath or None,
             image_width=ow,
             image_height=oh,
-            real_data=self.real_data,
-            box_attributes=self.box_attributes,
             object_list=self.object_list,
             class_id_to_super=sup,
         )
@@ -305,12 +325,10 @@ class MyWidget(QtWidgets.QWidget):
         sup = {c.class_id: c.super_category for c in self.class_catalog.classes}
         ow = getattr(self, "origin_width", None)
         oh = getattr(self, "origin_height", None)
-        recs = build_annotation_records(
+        recs = self.gt_document.build_metadata_records(
             image_path=self.imgfilePath or None,
             image_width=ow,
             image_height=oh,
-            real_data=self.real_data,
-            box_attributes=self.box_attributes,
             object_list=self.object_list,
             class_id_to_super=sup,
         )
@@ -337,8 +355,6 @@ class MyWidget(QtWidgets.QWidget):
         self.verticalLayout.addWidget(self._image_canvas)
         self.pmap = self._image_canvas.image_label
         self.pmap.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        self._image_canvas.set_mouse_move_handler(self.get_position)
-        self._image_canvas.set_mouse_press_handler(self.get_clicked_position)
 
         ### control zoom ###
         self.btn_zoom_in = QtWidgets.QPushButton(self.centralwidget)
@@ -349,14 +365,14 @@ class MyWidget(QtWidgets.QWidget):
         self.btn_zoom_in.clicked.connect(self.set_zoom_in)
 
         self.slider_zoom = QtWidgets.QSlider(self.centralwidget)
-        self.slider_zoom.setGeometry(QRect(255, 520, 231, 21))
+        self.slider_zoom.setGeometry(QRect(255, 518, 231, 28))
         self.slider_zoom.setProperty("value", 50)
         self.slider_zoom.setOrientation(Qt.Orientation.Horizontal)
         self.slider_zoom.setDisabled(True)
         self.slider_zoom.valueChanged.connect(self.getslidervalue)
 
         self.label_ratio = QtWidgets.QLabel(self.centralwidget)
-        self.label_ratio.setGeometry(QRect(615, 520, 300, 21))
+        self.label_ratio.setGeometry(QRect(615, 520, 300, 24))
 
         self.btn_zoom_out = QtWidgets.QPushButton(self.centralwidget)
         self.btn_zoom_out.setGeometry(QRect(505, 520, 89, 25))
@@ -367,22 +383,22 @@ class MyWidget(QtWidgets.QWidget):
 
         ### mouseMove（由 ImageCanvasWidget 轉發）###
         self.label_get_pos = QtWidgets.QLabel(self)
-        self.label_get_pos.setGeometry(125, 550, 250, 18)
+        self.label_get_pos.setGeometry(125, 552, 250, 18)
         self.label_get_pos.setText('current position = (x,y)')
         self.label_get_pos.setStyleSheet('font-size: 12px;')
 
         ### mousePress（由 ImageCanvasWidget 轉發；標註模式會改為 paint / paste）###
         self.label_click_pos = QtWidgets.QLabel(self)
-        self.label_click_pos.setGeometry(380, 550, 250, 18)
+        self.label_click_pos.setGeometry(395, 552, 260, 18)
         self.label_click_pos.setText('clicked position = (x,y)')
         self.label_click_pos.setStyleSheet('font-size: 12px;')
 
         ### show img.shape ###
         self.label_img_shape = QtWidgets.QLabel(self)
-        self.label_img_shape.setGeometry(630, 550, 500, 18)
+        self.label_img_shape.setGeometry(125, 574, 870, 18)
 
         self.lbl_autosave_status = QtWidgets.QLabel(self)
-        self.lbl_autosave_status.setGeometry(125, 572, 300, 16)
+        self.lbl_autosave_status.setGeometry(125, 596, 300, 16)
         self.lbl_autosave_status.setStyleSheet("font-size: 11px; color: #888;")
         self.lbl_autosave_status.setText("")
 
@@ -415,22 +431,84 @@ class MyWidget(QtWidgets.QWidget):
         self.listwidget.addItems([])
         self.listwidget.setGeometry(1010, 96, 430, 110)
         self.listwidget.setStyleSheet(STYLE_LIST_WIDGET)
-        self.listwidget.clicked.connect(self.showObject)
-        self.listwidget.currentRowChanged.connect(self._on_list_box_row_changed)
         self.listwidget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.listwidget.customContextMenuRequested.connect(self.on_context_menu_labimg)
+        self._gt_list_view = AnnotationListView(
+            count_label=self.label_list,
+            list_widget=self.listwidget,
+        )
+        self._gt_list_view.set_total(self._gt_document.total_boxes)
+        self._gt_actions = AnnotationActionsController(
+            parent=self,
+            command_controller=self._annotation_controller,
+            list_view=self._gt_list_view,
+            get_object_names=lambda: list(self.object_list),
+            get_canvas=lambda: self.canvas,
+            get_origin_size=lambda: (
+                int(getattr(self, "origin_width", 0) or 0),
+                int(getattr(self, "origin_height", 0) or 0),
+            ),
+            on_add_cancelled=self.set_img_ratio,
+        )
+        self._gt_draw = AnnotationDrawController(
+            get_canvas=lambda: self.canvas,
+            image_canvas=self._image_canvas,
+            on_prepare_draw_mode=self._prepare_gt_draw_mode,
+            on_clicked_position=self.__update_text_clicked_position,
+            on_request_add_box=self._gt_actions.prompt_add_box,
+            on_reset_view=self.set_img_ratio,
+            on_canvas_updated=self.update,
+        )
+        self._gt_preview = AnnotationPreviewController(
+            document=self.gt_document,
+            get_canvas=lambda: self.canvas,
+            image_canvas=self._image_canvas,
+            on_canvas_updated=self.update,
+        )
+        self._gt_edit = AnnotationEditController(
+            document=self.gt_document,
+            list_view=self.gt_list_view,
+            get_canvas=lambda: self.canvas,
+            image_canvas=self._image_canvas,
+            render_canvas=self._render_gt_canvas_for_interaction,
+            on_request_update_box=self._request_gt_box_update,
+            on_restore_preview=self._gt_preview.preview_row,
+            on_canvas_updated=self.update,
+        )
 
         self._attr_panel = AttributePanel(self)
         self._attr_panel.setGeometry(1010, 212, 430, 170)
-        self._attr_panel.values_changed.connect(self._on_attr_panel_changed)
-        self._attr_panel.set_recalc_size_callback(self._on_recalc_size_tag_for_selection)
         self._attr_panel.set_enabled_editing(False)
+        self._gt_workspace = AnnotationWorkspaceController(
+            document=self.gt_document,
+            list_view=self.gt_list_view,
+            attr_panel=self._attr_panel,
+            preview_controller=self._gt_preview,
+            on_delete_row=self._gt_actions.remove_row,
+            on_rename_row=self._gt_actions.rename_row,
+            on_clear_all=self._gt_actions.clear_all,
+        )
+        self._attr_panel.values_changed.connect(self._gt_workspace.on_attr_panel_changed)
+        self._attr_panel.set_recalc_size_callback(self._gt_workspace.on_recalc_size_tag)
+        self._gt_list_controller = AnnotationListController(
+            parent=self,
+            list_view=self._gt_list_view,
+            get_object_names=lambda: list(self.object_list),
+            on_preview_row=self._gt_workspace.preview_current_row,
+            on_row_changed=self._gt_workspace.on_row_changed,
+            on_delete_row=self._gt_workspace.delete_row,
+            on_rename_row=self._gt_workspace.rename_row,
+            on_clear_all=self._gt_workspace.clear_all,
+        )
+        self.listwidget.clicked.connect(self._gt_list_controller.on_row_clicked)
+        self.listwidget.currentRowChanged.connect(self._on_gt_row_changed)
+        self.listwidget.customContextMenuRequested.connect(self._gt_list_controller.open_context_menu)
+        self._install_default_canvas_handlers()
 
         self.label_clear = QtWidgets.QPushButton(self)
         self.label_clear.setText('Delete all')
         self.label_clear.setGeometry(1380, 386, 60, 20)
         self.label_clear.setStyleSheet(STYLE_BUTTON_SECONDARY)
-        self.label_clear.clicked.connect(self.allbboxClear)
+        self.label_clear.clicked.connect(self._gt_list_controller.confirm_clear_all)
 
         ### paste_button ###
         self.btn_paste = QtWidgets.QPushButton(self)
@@ -460,42 +538,82 @@ class MyWidget(QtWidgets.QWidget):
 
         self.btn_chooseimg = QtWidgets.QPushButton(self)
         self.btn_chooseimg.setText('Choose')
-        self.btn_chooseimg.setGeometry(1010, 550, 50, 20)
+        self.btn_chooseimg.setGeometry(1010, 558, 50, 20)
         self.btn_chooseimg.setStyleSheet(STYLE_BUTTON_SECONDARY)
         self.btn_chooseimg.clicked.connect(self.chooseImg)
 
         self.btn_add = QtWidgets.QPushButton(self)
         self.btn_add.setText('Add')
-        self.btn_add.setGeometry(1065, 550, 50, 20)
+        self.btn_add.setGeometry(1065, 558, 50, 20)
         self.btn_add.setStyleSheet(STYLE_BUTTON_SECONDARY_DISABLED)
         self.btn_add.setDisabled(True)
         self.btn_add.clicked.connect(self.inputPimg)
 
         self.btn_reset = QtWidgets.QPushButton(self)
         self.btn_reset.setText('Reset')
-        self.btn_reset.setGeometry(1390, 550, 50, 20)
+        self.btn_reset.setGeometry(1390, 558, 50, 20)
         self.btn_reset.setStyleSheet(STYLE_BUTTON_SECONDARY)
         self.btn_reset.clicked.connect(self.resetVal)
 
         ### Paste_imgae_QListWidget ###
         self.pimg_list = QtWidgets.QLabel(self)
         self.pimg_list.setText('Paste Images')
-        self.pimg_list.setGeometry(1010, 574, 200, 20)
+        self.pimg_list.setGeometry(1010, 584, 200, 20)
         self.pimg_list.setStyleSheet('font-size: 12px;')
 
         self.pimglistwidget = QtWidgets.QListWidget(self)
         self.pimglistwidget.addItems([])
-        self.pimglistwidget.setGeometry(1010, 596, 430, 74)
+        self.pimglistwidget.setGeometry(1010, 606, 430, 74)
         self.pimglistwidget.setStyleSheet(STYLE_LIST_WIDGET)
-        self.pimglistwidget.clicked.connect(self.showPimg)
         self.pimglistwidget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.pimglistwidget.customContextMenuRequested.connect(self.on_context_menu_pasteimg)
 
         self.pimg_clear = QtWidgets.QPushButton(self)
         self.pimg_clear.setText('Delete all')
-        self.pimg_clear.setGeometry(1380, 674, 60, 20)
+        self.pimg_clear.setGeometry(1380, 684, 60, 20)
         self.pimg_clear.setStyleSheet(STYLE_BUTTON_SECONDARY)
-        self.pimg_clear.clicked.connect(self.allpimgClear)
+
+        self._paste_actions = PasteActionsController(
+            parent=self,
+            document=self.paste_document,
+            list_widget=self.pimglistwidget,
+            count_label=self.pimg_list,
+            get_object_names=lambda: list(self.object_list),
+            append_object_name=self.object_list.append,
+            image_canvas=self._image_canvas,
+            on_canvas_updated=self.update,
+            on_rows_changed=self._refresh_paste_canvas_from_committed,
+            on_add_cancelled=self._image_canvas.sync_label_from_canvas,
+            on_disable_add=lambda: self.btn_add.setDisabled(True),
+            build_record=self._build_paste_record,
+        )
+        self._paste_candidate_controller = PasteCandidateController(
+            session=self.paste_candidate,
+            get_canvas=lambda: self.canvas,
+            get_origin_size=lambda: (
+                int(getattr(self, "origin_width", 0) or 0),
+                int(getattr(self, "origin_height", 0) or 0),
+            ),
+            image_canvas=self._image_canvas,
+            preview_label=self.pmap_pasteimg,
+            set_mouse_press_handler=self._image_canvas.set_mouse_press_handler,
+            get_adjustments=self._get_paste_adjustments,
+            on_prepare_paste_mode=self._prepare_paste_mode,
+            on_clicked_position=self.__update_text_clicked_position,
+            on_enable_add=lambda enabled: self.btn_add.setDisabled(not enabled),
+            on_set_adjustment_labels=self._set_paste_adjustment_labels,
+            on_canvas_updated=self.update,
+        )
+        self._paste_preview = PastePreviewController(
+            document=self.paste_document,
+            get_canvas=lambda: self.canvas,
+            image_canvas=self._image_canvas,
+            on_canvas_updated=self.update,
+        )
+        self.pimglistwidget.clicked.connect(
+            lambda _index: self._paste_preview.preview_row(self._paste_actions.current_row())
+        )
+        self.pimglistwidget.customContextMenuRequested.connect(self._paste_actions.open_context_menu)
+        self.pimg_clear.clicked.connect(self._paste_actions.clear_all)
 
         self.mbox = QtWidgets.QMessageBox(self)
 
@@ -695,12 +813,12 @@ class MyWidget(QtWidgets.QWidget):
         self.label_adj_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.slider_1 = QtWidgets.QSlider(self)
         self.slider_1.setOrientation(Qt.Orientation.Horizontal)
-        self.slider_1.setGeometry(sx + 80, 456, sw, 16)
+        self.slider_1.setGeometry(sx + 80, 451, sw, 28)
         self.slider_1.setRange(0, 100)
         self.slider_1.setValue(50)
         self.slider_1.valueChanged.connect(self.controlpimg)
         self.label_val_1 = QtWidgets.QLabel(self)
-        self.label_val_1.setGeometry(sx + 265, 456, 50, 16)
+        self.label_val_1.setGeometry(sx + 265, 451, 50, 28)
         self.label_val_1.setText("100 %")
         self.label_val_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -710,12 +828,12 @@ class MyWidget(QtWidgets.QWidget):
         self.label_adj_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.slider_2 = QtWidgets.QSlider(self)
         self.slider_2.setOrientation(Qt.Orientation.Horizontal)
-        self.slider_2.setGeometry(sx + 80, 480, sw, 16)
+        self.slider_2.setGeometry(sx + 80, 475, sw, 28)
         self.slider_2.setRange(0, 360)
         self.slider_2.setValue(0)
         self.slider_2.valueChanged.connect(self.controlpimg)
         self.label_val_2 = QtWidgets.QLabel(self)
-        self.label_val_2.setGeometry(sx + 265, 480, 50, 16)
+        self.label_val_2.setGeometry(sx + 265, 475, 50, 28)
         self.label_val_2.setText('0 °')
         self.label_val_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -725,12 +843,12 @@ class MyWidget(QtWidgets.QWidget):
         self.label_adj_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.slider_3 = QtWidgets.QSlider(self)
         self.slider_3.setOrientation(Qt.Orientation.Horizontal)
-        self.slider_3.setGeometry(sx + 80, 504, sw, 16)
+        self.slider_3.setGeometry(sx + 80, 499, sw, 28)
         self.slider_3.setRange(0, 200)
         self.slider_3.setValue(100)
         self.slider_3.valueChanged.connect(self.controlpimg)
         self.label_val_3 = QtWidgets.QLabel(self)
-        self.label_val_3.setGeometry(sx + 265, 504, 50, 16)
+        self.label_val_3.setGeometry(sx + 265, 499, 50, 28)
         self.label_val_3.setText('100')
         self.label_val_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -740,12 +858,12 @@ class MyWidget(QtWidgets.QWidget):
         self.label_adj_4.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.slider_4 = QtWidgets.QSlider(self)
         self.slider_4.setOrientation(Qt.Orientation.Horizontal)
-        self.slider_4.setGeometry(sx + 80, 528, sw, 16)
+        self.slider_4.setGeometry(sx + 80, 523, sw, 28)
         self.slider_4.setRange(0, 200)
         self.slider_4.setValue(100)
         self.slider_4.valueChanged.connect(self.controlpimg)
         self.label_val_4 = QtWidgets.QLabel(self)
-        self.label_val_4.setGeometry(sx + 265, 528, 50, 16)
+        self.label_val_4.setGeometry(sx + 265, 523, 50, 28)
         self.label_val_4.setText('100')
         self.label_val_4.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -761,7 +879,7 @@ class MyWidget(QtWidgets.QWidget):
         t = self._tile_grid[idx]
         return (t.x, t.y, t.w, t.h)
 
-    def set_img_ratio(self):
+    def set_img_ratio(self, *, bbox_data_override: list | None = None):
         ow = int(getattr(self, "origin_width", 0) or 0)
         self.ratio_rate, self.qpixmap_height = self._image_canvas.redraw_scaled_overlay(
             origin_canvas=self.origin_canvas,
@@ -769,7 +887,7 @@ class MyWidget(QtWidgets.QWidget):
             origin_height=self.origin_height,
             origin_width=ow,
             hide_boxes=self.hideBox.isChecked(),
-            bbox_data=self.data,
+            bbox_data=self.data if bbox_data_override is None else bbox_data_override,
             pimg_data=self.pimg_data,
             paste_images=self.paste_images,
             predictions=self.predictions,
@@ -810,6 +928,56 @@ class MyWidget(QtWidgets.QWidget):
     def __update_text_clicked_position(self, x, y):
         self.label_click_pos.setText(f'Clicked position = ({x}, {y})')
 
+    def _install_default_canvas_handlers(self) -> None:
+        self._image_canvas.set_mouse_move_handler(self._handle_default_canvas_move)
+        self._image_canvas.set_mouse_press_handler(self._handle_default_canvas_press)
+        self._image_canvas.set_mouse_release_handler(self._handle_default_canvas_release)
+
+    def _handle_default_canvas_move(self, event) -> None:
+        self.get_position(event)
+        self._gt_edit.handle_move(event)
+
+    def _handle_default_canvas_press(self, event) -> None:
+        self.get_clicked_position(event)
+        self._gt_edit.handle_press(event)
+
+    def _handle_default_canvas_release(self, event) -> None:
+        self._gt_edit.handle_release(event)
+
+    def _render_gt_canvas_for_interaction(self, exclude_row: int | None) -> None:
+        if exclude_row is None:
+            self.set_img_ratio()
+            return
+        self.set_img_ratio(
+            bbox_data_override=[row for i, row in enumerate(self.data) if i != exclude_row]
+        )
+
+    def _request_gt_box_update(
+        self,
+        row: int,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+    ) -> bool:
+        if row < 0 or row >= len(self.data):
+            return False
+        return self._gt_actions.update_box_from_rect(
+            row=row,
+            item=str(self.data[row][0]),
+            x1=x1,
+            y1=y1,
+            x2=x2,
+            y2=y2,
+            select_row=True,
+        )
+
+    def _on_gt_row_changed(self, row: int) -> None:
+        self._gt_edit.cancel_active_drag()
+        self._gt_draw.clear_pending()
+        self._install_default_canvas_handlers()
+        self._gt_list_controller.on_row_changed(row)
+
     def get_clicked_position(self, event):
         mx = int(event.position().x())
         my = int(event.position().y())
@@ -818,91 +986,15 @@ class MyWidget(QtWidgets.QWidget):
     def __update_text_img_shape(self):
         current_text = f"Current img shape = ({self.canvas.width()}, {self.canvas.height()})"
         origin_text = f"Origin img shape = ({self.origin_width}, {self.origin_height})"
-        self.label_img_shape.setText(current_text + "\t" + origin_text)
+        self.label_img_shape.setText(current_text + "    |    " + origin_text)
 
     def make_label(self):
+        self._gt_edit.cancel_active_drag()
+        self._gt_draw.enter_draw_mode()
+
+    def _prepare_gt_draw_mode(self) -> None:
         self.hideBox.setChecked(False)
         self.hideBbox(self.hideBox)
-        self._image_canvas.set_mouse_press_handler(self.paint)
-
-    def paint(self, event):
-        mx = int(event.position().x())
-        my = int(event.position().y())
-        self.__update_text_clicked_position(mx, my)
-
-        if mx < self.canvas.width() and my < self.canvas.height():
-            qpainter = QPainter()
-            qpainter.begin(self.canvas)
-            qpainter.setPen(QPen(QColor('#00ff00'), 3))
-            qpainter.drawPoint(mx, my)
-            qpainter.end()
-            self._image_canvas.sync_label_from_canvas()
-            self.update()
-            if self.x is None and self.y is None:
-                self.x, self.y = mx, my
-            else:
-                if mx > self.x and my > self.y:
-                    self.last_x, self.last_y = mx, my
-                    qpainter = QPainter()
-                    qpainter.begin(self.canvas)
-                    qpainter.setPen(QPen(QColor('#00ff00'), 1))
-                    qpainter.drawRect(
-                        self.x, self.y,
-                        abs(self.x - self.last_x), abs(self.y - self.last_y)
-                    )
-                    qpainter.end()
-                    self._image_canvas.sync_label_from_canvas()
-                    self.update()
-                    self.qInput()
-                    self.x, self.y = None, None
-                else:
-                    self.x, self.y = None, None
-                    if self.hideBox.isChecked():
-                        self._image_canvas.set_canvas(
-                            self.origin_canvas.scaledToHeight(self.qpixmap_height)
-                        )
-                        self.update()
-                    else:
-                        pm = self.origin_canvas.scaledToHeight(self.qpixmap_height)
-                        draw_bboxes_on_canvas(pm, self.data + self.pimg_data)
-                        self._image_canvas.set_canvas(pm)
-                        self.update()
-
-    def qInput(self):
-        item, ok = QtWidgets.QInputDialog().getItem(
-            self, '', 'Enter object name', self.object_list, 0
-        )
-        if ok:
-            real_x = int(self.x * self.origin_width / self.canvas.width())
-            real_y = int(self.y * self.origin_height / self.canvas.height())
-            real_last_x = int(self.last_x * self.origin_width / self.canvas.width())
-            real_last_y = int(self.last_y * self.origin_height / self.canvas.height())
-            data_row = [
-                item, self.x, self.y, self.last_x, self.last_y,
-                self.canvas.width(), self.canvas.height(),
-            ]
-            real_row = [item, real_x, real_y, real_last_x, real_last_y]
-            extended = item not in self.object_list
-            self._annotation_controller.apply(
-                AddBoxCommand(
-                    data_row,
-                    real_row,
-                    item,
-                    extended_object_list=extended,
-                )
-            )
-            self.listwidget.setCurrentRow(self.listwidget.count() - 1)
-        else:
-            if self.hideBox.isChecked():
-                self._image_canvas.set_canvas(
-                    self.origin_canvas.scaledToHeight(self.qpixmap_height)
-                )
-                self.update()
-            else:
-                pm = self.origin_canvas.scaledToHeight(self.qpixmap_height)
-                draw_bboxes_on_canvas(pm, self.data + self.pimg_data)
-                self._image_canvas.set_canvas(pm)
-                self.update()
 
     def hideBbox(self, _cb) -> None:
         try:
@@ -956,18 +1048,9 @@ class MyWidget(QtWidgets.QWidget):
         pred = self.predictions[row]
         if pred.pred_status not in (STATUS_PREDICTED, STATUS_EDITED):
             return
-        canvas = self.canvas
-        if canvas is None:
+        payload = self._gt_actions.build_add_box_from_prediction(pred)
+        if payload is None:
             return
-        cw, ch = canvas.width(), canvas.height()
-        item = pred.class_name
-        mx1 = pred.x1 * cw / self.origin_width
-        my1 = pred.y1 * ch / self.origin_height
-        mx2 = pred.x2 * cw / self.origin_width
-        my2 = pred.y2 * ch / self.origin_height
-        data_row = [item, mx1, my1, mx2, my2, cw, ch]
-        real_row = [item, int(pred.x1), int(pred.y1), int(pred.x2), int(pred.y2)]
-        ext = item not in self.object_list
         self.predictions.pop(row)
         self._refresh_pred_listwidget()
         n = self.pred_listwidget.count()
@@ -975,9 +1058,7 @@ class MyWidget(QtWidgets.QWidget):
             self.pred_listwidget.setCurrentRow(min(row, n - 1))
         else:
             self.pred_listwidget.setCurrentRow(-1)
-        self._annotation_controller.apply(
-            AddBoxCommand(data_row, real_row, item, extended_object_list=ext)
-        )
+        self._gt_actions.add_box(*payload)
         # Redraw via AddBoxCommand._refresh_canvas (no duplicate orange pred).
 
     def reject_selected_prediction(self) -> None:
@@ -1029,14 +1110,9 @@ class MyWidget(QtWidgets.QWidget):
                 self, "Error analysis", "No GT annotations or predictions loaded."
             )
             return
-        gt_boxes: list[tuple[str, float, float, float, float]] = []
-        for row in self.real_data:
-            name = row[0]
-            x1, y1, x2, y2 = float(row[1]), float(row[2]), float(row[3]), float(row[4])
-            gt_boxes.append((name, x1, y1, x2, y2))
         dlg = ErrorAnalysisDialog(
             self,
-            gt_boxes=gt_boxes,
+            gt_boxes=self.gt_document.gt_boxes(),
             predictions=self.predictions,
             image_id=self.imgfilePath or "",
         )
@@ -1051,238 +1127,74 @@ class MyWidget(QtWidgets.QWidget):
         sup = {c.class_id: c.super_category for c in self.class_catalog.classes}
         ow = getattr(self, "origin_width", None)
         oh = getattr(self, "origin_height", None)
-        recs = build_annotation_records(
+        recs = self.gt_document.build_metadata_records(
             image_path=self.imgfilePath or None,
             image_width=ow,
             image_height=oh,
-            real_data=self.real_data,
-            box_attributes=self.box_attributes,
             object_list=self.object_list,
             class_id_to_super=sup,
         )
         dlg = StatisticsDialog(self, records=recs)
         dlg.exec()
 
-    def showObject(self):
-        num = self.listwidget.currentIndex().row()
-        self.ith1 = num
-        x1, y1, x2, y2, w, h = self.data[num][1:]
-        x1 *= self.canvas.width() / w
-        y1 *= self.canvas.height() / h
-        x2 *= self.canvas.width() / w
-        y2 *= self.canvas.height() / h
-        copy_canvas = self.canvas.copy()
-        qpainter = QPainter()
-        qpainter.begin(copy_canvas)
-        color = QColor(30, 144, 255, 120)
-        qpainter.fillRect(
-            int(x1), int(y1),
-            abs(int(x2 - x1)) + 1, abs(int(y2 - y1)) + 1,
-            color
-        )
-        qpainter.end()
-        self._image_canvas.paint_label_only(copy_canvas)
-        self.update()
-
-    def bboxClear(self):
-        try:
-            self._annotation_controller.apply(RemoveBoxCommand(self.ith1))
-        except (IndexError, AttributeError):
-            return
-
-    def allbboxClear(self):
-        try:
-            ret = self.mbox.question(
-                self, 'question', 'Delete all?',
-                self.mbox.StandardButton.Cancel, self.mbox.StandardButton.Ok
-            )
-            if ret == self.mbox.StandardButton.Ok:
-                self._annotation_controller.apply(ClearAllBoxesCommand())
-        except (AttributeError, ZeroDivisionError):
-            return
-
-    def bboxRename(self):
-        try:
-            text, ok = QtWidgets.QInputDialog().getItem(
-                self, '', 'Enter object name', self.object_list, 0
-            )
-            if ok:
-                old = self.data[self.ith1][0]
-                if old == text:
-                    return
-                self._annotation_controller.apply(
-                    RenameBoxCommand(self.ith1, old, text)
-                )
-        except (IndexError, AttributeError):
-            return
-
     def chooseImg(self):
         filePath, filetype = QtWidgets.QFileDialog.getOpenFileName(
             self, directory='rembg_img', filter='IMAGE(*.jpg *.png *.gif *.bmp)'
         )
         if filePath:
-            self._current_asset_path = filePath
-            self.pasteimg = cv2.imread(filePath, cv2.IMREAD_UNCHANGED)
-            oW = np.sum(self.pasteimg[:, :, 3], axis=0)
-            oW[oW != 0] = 1
-            min_x = np.min(np.where(oW == 1))
-            max_x = np.max(np.where(oW == 1))
-            oH = np.sum(self.pasteimg[:, :, 3], axis=1)
-            oH[oH != 0] = 1
-            min_y = np.min(np.where(oH == 1))
-            max_y = np.max(np.where(oH == 1))
-            self.pasteimg = self.pasteimg[min_y:max_y + 1, min_x:max_x + 1, :]
-            self.pasteimg = np.pad(
-                self.pasteimg, ((1, 1), (1, 1), (0, 0)),
-                "constant", constant_values=0
-            )
-            self.origin_pasteimg = self.pasteimg.copy()
             self.resetVal()
             self.Hflip.setDisabled(False)
             self.Hflip.setChecked(False)
-            self.Hflippimg(self.Hflip)
+            self._paste_candidate_controller.load_asset(filePath)
 
     def Hflippimg(self, cb):
-        if cb.isChecked():
-            self.pasteimg = self.origin_pasteimg[:, ::-1, :]
-        else:
-            self.pasteimg = self.origin_pasteimg
-        pasteimg = cv2.cvtColor(self.pasteimg, cv2.COLOR_BGRA2RGBA)
-        self.pasteimg_height, self.pasteimg_width, self.pasteimg_channel = self.pasteimg.shape
-        bytesPerline = self.pasteimg_channel * self.pasteimg_width
-        pimg = QImage(
-            pasteimg, self.pasteimg_width, self.pasteimg_height,
-            bytesPerline, QImage.Format.Format_RGBA8888
-        )
-        self.paste_canvas = QPixmap.fromImage(pimg)
-        if self.pasteimg_width < self.pasteimg_height:
-            self.paste_canvas = self.paste_canvas.scaled(
-                int(80 * self.pasteimg_width / self.pasteimg_height), 80
-            )
-        else:
-            self.paste_canvas = self.paste_canvas.scaled(
-                80, int(80 * self.pasteimg_height / self.pasteimg_width)
-            )
-        self.pmap_pasteimg.setPixmap(self.paste_canvas)
+        self._paste_candidate_controller.set_horizontal_flip(cb.isChecked())
 
     def inputPimg(self):
-        item, ok = QtWidgets.QInputDialog().getItem(
-            self, '', 'Enter object name', self.object_list, 0
+        candidate = self.paste_candidate
+        self._paste_actions.prompt_add_candidate(
+            bbox_row=candidate.bbox_pimg,
+            real_bbox_row=candidate.real_bbox_pimg,
+            paste_image=candidate.norm_pimg,
+            preview_canvas=candidate.pasteimg_canvas,
         )
-        if ok:
-            self.pimglistwidget.addItem(item)
-            self.bbox_pimg.insert(0, item)
-            self.real_bbox_pimg.insert(0, item)
-            if item not in self.object_list:
-                self.object_list.append(item)
-            self.pimg_data.append(self.bbox_pimg)
-            self.real_pimg_data.append(self.real_bbox_pimg)
-            self.paste_images.append(self.norm_pimg)
-            self.pimg_list.setText(f'Paste Images  (Total: {len(self.real_pimg_data)})')
-            self._image_canvas.set_canvas(self.pasteimg_canvas)
-            self.btn_add.setDisabled(True)
-            self._record_paste(item)
-        else:
-            self._image_canvas.sync_label_from_canvas()
-        self.cX, self.cY = None, None
+        candidate.clear_candidate()
 
-    def showPimg(self):
-        num = self.pimglistwidget.currentIndex().row()
-        self.ith2 = num
-        x1, y1, x2, y2, w, h = self.pimg_data[num][1:]
-        x1 *= self.canvas.width() / w
-        y1 *= self.canvas.height() / h
-        x2 *= self.canvas.width() / w
-        y2 *= self.canvas.height() / h
-        copy_canvas = self.canvas.copy()
-        qpainter = QPainter()
-        qpainter.begin(copy_canvas)
-        color = QColor(30, 144, 255, 120)
-        qpainter.fillRect(
-            int(x1), int(y1),
-            abs(int(x2 - x1)) + 1, abs(int(y2 - y1)) + 1,
-            color
-        )
-        qpainter.end()
-        self._image_canvas.paint_label_only(copy_canvas)
-        self.update()
-
-    def pimgClear(self):
+    def _refresh_paste_canvas_from_committed(self) -> None:
         try:
-            self.pimg_data.pop(self.ith2)
-            self.real_pimg_data.pop(self.ith2)
-            self.paste_images.pop(self.ith2)
-            if self.ith2 < len(self.paste_records):
-                self.paste_records.pop(self.ith2)
-            self.pimg_list.setText(f'Paste Images  (Total: {len(self.real_pimg_data)})')
-            self.pimglistwidget.takeItem(self.ith2)
             pm = self.origin_canvas.scaledToHeight(self.qpixmap_height)
             draw_paste_images_on_canvas(pm, self.paste_images)
             self._image_canvas.set_canvas(pm)
             self.update()
             self.hideBox.setChecked(False)
             self.hideBbox(self.hideBox)
-        except (IndexError, AttributeError):
-            return
-
-    def allpimgClear(self):
-        try:
-            ret = self.mbox.question(
-                self, 'question', 'Delete all?',
-                self.mbox.StandardButton.Cancel, self.mbox.StandardButton.Ok
-            )
-            if ret == self.mbox.StandardButton.Ok:
-                self.pimg_data.clear()
-                self.real_pimg_data.clear()
-                self.paste_images.clear()
-                self.paste_records.clear()
-                self.pimg_list.setText(f'Paste Images  (Total: {len(self.real_pimg_data)})')
-                self.pimglistwidget.clear()
-                self._image_canvas.set_canvas(
-                    self.origin_canvas.scaledToHeight(self.qpixmap_height)
-                )
-                self.update()
-                self.hideBox.setChecked(False)
-                self.hideBbox(self.hideBox)
         except (AttributeError, ZeroDivisionError):
             return
 
-    def pimgRename(self):
+    def _build_paste_record(
+        self,
+        class_name: str,
+        real_row: list[object],
+    ) -> PasteRecord | None:
         try:
-            text, ok = QtWidgets.QInputDialog().getItem(
-                self, '', 'Enter object name', self.object_list, 0
-            )
-            if ok:
-                self.pimg_data[self.ith2][0] = text
-                self.real_pimg_data[self.ith2][0] = text
-                item = self.pimglistwidget.item(self.ith2)
-                item.setText(text)
-                if text not in self.object_list:
-                    self.object_list.append(text)
-        except (IndexError, AttributeError):
-            return
-
-    def _record_paste(self, class_name: str) -> None:
-        """Capture current paste transform params into a PasteRecord."""
-        try:
+            bbox_x1, bbox_y1, bbox_x2, bbox_y2 = bbox_from_legacy_paste_row(real_row)
             scale = pow(10, (self.slider_1.value() - 50) / 50)
-            rec = PasteRecord(
+            return PasteRecord(
                 image_path=self.imgfilePath or "",
-                asset_path=self._current_asset_path,
+                asset_path=self.paste_candidate.asset_path,
                 class_name=class_name,
                 scale=round(scale, 4),
                 rotation_deg=float(self.slider_2.value()),
                 h_flip=self.Hflip.isChecked(),
                 brightness=self.slider_3.value(),
                 contrast=self.slider_4.value(),
-                bbox_x1=int(self.real_bbox_pimg[0]),
-                bbox_y1=int(self.real_bbox_pimg[1]),
-                bbox_x2=int(self.real_bbox_pimg[2]),
-                bbox_y2=int(self.real_bbox_pimg[3]),
+                bbox_x1=bbox_x1,
+                bbox_y1=bbox_y1,
+                bbox_x2=bbox_x2,
+                bbox_y2=bbox_y2,
             )
-            self.paste_records.append(rec)
-        except (AttributeError, IndexError):
-            pass
+        except (AttributeError, IndexError, ValueError):
+            return None
 
     def export_paste_metadata_json(self) -> None:
         if not self.paste_records:
@@ -1317,151 +1229,39 @@ class MyWidget(QtWidgets.QWidget):
         self.slider_2.setValue(0)
         self.slider_3.setValue(100)
         self.slider_4.setValue(100)
-        self.label_val_1.setText('100 %')
-        self.label_val_2.setText('0 °')
-        self.label_val_3.setText('100')
-        self.label_val_4.setText('100')
+        self._set_paste_adjustment_labels('100 %', '0 °', '100', '100')
 
-    def controlpimg(self):
-        val1 = self.slider_1.value()
-        val2 = self.slider_2.value()
-        val3 = self.slider_3.value()
-        val4 = self.slider_4.value()
-        rate1 = pow(10, (val1 - 50) / 50)
+    def _get_paste_adjustments(self) -> tuple[int, int, int, int]:
+        return (
+            self.slider_1.value(),
+            self.slider_2.value(),
+            self.slider_3.value(),
+            self.slider_4.value(),
+        )
 
-        try:
-            width = int(self.pasteimg_width * rate1)
-            height = int(self.pasteimg_height * rate1)
-            dim = (width, height)
-            self.resizeimg = cv2.resize(self.pasteimg, dim, interpolation=cv2.INTER_AREA)
-            rH, rW = self.resizeimg.shape[:2]
+    def _set_paste_adjustment_labels(
+        self,
+        scale_text: str,
+        rotate_text: str,
+        brightness_text: str,
+        contrast_text: str,
+    ) -> None:
+        self.label_val_1.setText(scale_text)
+        self.label_val_2.setText(rotate_text)
+        self.label_val_3.setText(brightness_text)
+        self.label_val_4.setText(contrast_text)
 
-            if rH % 2 == 0:
-                self.resizeimg = np.pad(
-                    self.resizeimg, ((1, 0), (0, 0), (0, 0)),
-                    "constant", constant_values=0
-                )
-                rH += 1
-            if rW % 2 == 0:
-                self.resizeimg = np.pad(
-                    self.resizeimg, ((0, 0), (1, 0), (0, 0)),
-                    "constant", constant_values=0
-                )
-                rW += 1
-
-            (cX, cY) = (rW // 2, rH // 2)
-            M = cv2.getRotationMatrix2D((cX, cY), -val2, 1)
-            cos = np.abs(M[0, 0])
-            sin = np.abs(M[0, 1])
-            nW = int((rH * sin) + (rW * cos))
-            nH = int((rH * cos) + (rW * sin))
-            M[0, 2] += (nW - rW) / 2
-            M[1, 2] += (nH - rH) / 2
-            self.rotated = cv2.warpAffine(
-                self.resizeimg, M, (nW, nH), flags=cv2.INTER_AREA
-            )
-
-            b = val3 - 100
-            c = max(-99, val4 - 100)
-            bc_img = self.rotated[:, :, :3] * (c / 100 + 1) - c + b
-            bc_img = np.clip(bc_img, 0, 255)
-            bc_img = np.uint8(bc_img)
-            self.bc_image = np.dstack((bc_img, self.rotated[:, :, 3]))
-
-            left = self.cX - nW // 2
-            top = self.cY - nH // 2
-            right = self.cX + nW - nW // 2
-            down = self.cY + nH - nH // 2
-
-            self.pasteimg_canvas = self.canvas.copy()
-            qpainter = QPainter()
-            qpainter.begin(self.pasteimg_canvas)
-            pimg = cv2.cvtColor(self.bc_image, cv2.COLOR_BGRA2RGBA)
-            bytesPerline = 4 * nW
-            pimage = QImage(
-                pimg, nW, nH, bytesPerline, QImage.Format.Format_RGBA8888
-            )
-            qpainter.drawImage(QRect(left, top, nW, nH), pimage)
-            qpainter.end()
-            self._image_canvas.paint_label_only(self.pasteimg_canvas)
-            self.update()
-
-            W = np.sum(self.bc_image[:, :, 3], axis=0)
-            W[W != 0] = 1
-            x1 = left + np.min(np.where(W == 1)) - 1
-            x2 = right - (W.shape[0] - np.max(np.where(W == 1))) + 1
-            H = np.sum(self.bc_image[:, :, 3], axis=1)
-            H[H != 0] = 1
-            y1 = top + np.min(np.where(H == 1)) - 1
-            y2 = down - (H.shape[0] - np.max(np.where(H == 1))) + 1
-
-            real_x1 = max(0, int(x1 * self.origin_width / self.pasteimg_canvas.width()))
-            real_y1 = max(0, int(y1 * self.origin_height / self.pasteimg_canvas.height()))
-            real_x2 = min(
-                int(x2 * self.origin_width / self.pasteimg_canvas.width()),
-                self.origin_width
-            )
-            real_y2 = min(
-                int(y2 * self.origin_height / self.pasteimg_canvas.height()),
-                self.origin_height
-            )
-
-            self.norm_pimg = [
-                pimage,
-                left / self.pasteimg_canvas.width(),
-                top / self.pasteimg_canvas.height(),
-                nW / self.pasteimg_canvas.width(),
-                nH / self.pasteimg_canvas.height(),
-            ]
-            self.bbox_pimg = [
-                x1, y1, x2, y2,
-                self.pasteimg_canvas.width(), self.pasteimg_canvas.height(),
-            ]
-            self.real_bbox_pimg = [real_x1, real_y1, real_x2, real_y2]
-
-        except (AttributeError, TypeError, ValueError, ZeroDivisionError):
-            pass
-
-        self.label_val_1.setText(f"{int(100 * rate1)} %")
-        self.label_val_2.setText(str(val2) + ' °')
-        self.label_val_3.setText(str(val3))
-        self.label_val_4.setText(str(val4))
-
-    def pasteImg(self):
+    def _prepare_paste_mode(self) -> None:
+        self._gt_edit.cancel_active_drag()
+        self._gt_draw.clear_pending()
         self.hideBox.setChecked(True)
         self.hideBbox(self.hideBox)
-        self._image_canvas.set_mouse_press_handler(self.paste)
 
-    def paste(self, event):
-        x = int(event.position().x())
-        y = int(event.position().y())
-        self.__update_text_clicked_position(x, y)
-        if x < self.canvas.width() and y < self.canvas.height():
-            self.hideBox.setChecked(True)
-            self.hideBbox(self.hideBox)
-            self.btn_add.setDisabled(False)
-            self.cX, self.cY = x, y
-            self.controlpimg()
+    def controlpimg(self):
+        self._paste_candidate_controller.recompute_preview()
 
-    def on_context_menu_labimg(self, pos):
-        context = QtWidgets.QMenu(self)
-        self.action_labimgrename = QAction("Rename", self)
-        self.action_labimgdelete = QAction("Delete", self)
-        context.addAction(self.action_labimgrename)
-        context.addAction(self.action_labimgdelete)
-        self.action_labimgrename.triggered.connect(self.bboxRename)
-        self.action_labimgdelete.triggered.connect(self.bboxClear)
-        context.exec(self.mapToGlobal(pos + QPoint(1010, 96)))
-
-    def on_context_menu_pasteimg(self, pos):
-        context = QtWidgets.QMenu(self)
-        self.action_pimgrename = QAction("Rename", self)
-        self.action_pimgdelete = QAction("Delete", self)
-        context.addAction(self.action_pimgrename)
-        context.addAction(self.action_pimgdelete)
-        self.action_pimgrename.triggered.connect(self.pimgRename)
-        self.action_pimgdelete.triggered.connect(self.pimgClear)
-        context.exec(self.mapToGlobal(pos + QPoint(1010, 596)))
+    def pasteImg(self):
+        self._paste_candidate_controller.enter_paste_mode()
 
     def newFile(self):
         filepath, filetype = QtWidgets.QFileDialog.getOpenFileName(
@@ -1487,24 +1287,21 @@ class MyWidget(QtWidgets.QWidget):
                 self.action_saveimg.setDisabled(False)
                 self.action_savelab.setDisabled(False)
 
-                self.paste_images = []
-                self.real_data = []
-                self.data = []
-                self.real_pimg_data = []
-                self.pimg_data = []
+                self._paste_document.clear()
+                self._paste_candidate.clear()
+                self._gt_document.clear()
                 self.predictions = []
-                self.paste_records = []
-                self._current_asset_path = ""
+                self._gt_draw.clear_pending()
+                self._gt_edit.cancel_active_drag()
                 self._annotation_controller.reset()
+                self._install_default_canvas_handlers()
 
-                self.label_list.setText(f'Box Labels  (Total: {len(self.real_data)})')
-                self.pimg_list.setText(f'Paste Images  (Total: {len(self.real_pimg_data)})')
-                self.listwidget.clear()
+                self.gt_list_view.set_total(self._gt_document.total_boxes)
+                self.pimg_list.setText(f'Paste Images  (Total: {self.paste_document.total_pastes})')
+                self.gt_list_view.clear()
                 self.pimglistwidget.clear()
-                self.box_attributes.clear()
                 self._refresh_pred_listwidget()
-                self.listwidget.setCurrentRow(-1)
-                self._refresh_attribute_panel_for_row(-1)
+                self._gt_workspace.clear_selection()
                 self.resetVal()
 
                 if self.img.ndim == 2:
@@ -1542,33 +1339,24 @@ class MyWidget(QtWidgets.QWidget):
             )
             if ret == self.mbox.StandardButton.Ok:
                 try:
-                    blocks = []
-                    with open(filePath, encoding='utf-8') as file_obj:
-                        for raw in file_obj:
-                            line = raw.strip()
-                            if not line:
-                                continue
-                            data = line.split()
-                            obj = int(data[0])
-                            x, y, w, h = [float(num) for num in data[1:]]
-                            x1 = int(x * self.origin_width - w * self.origin_width / 2)
-                            y1 = int(y * self.origin_height - h * self.origin_height / 2)
-                            x2 = int(x * self.origin_width + w * self.origin_width / 2)
-                            y2 = int(y * self.origin_height + h * self.origin_height / 2)
-                            obj_name = self.object_list[obj]
-                            d_row = [
-                                obj_name, x1, y1, x2, y2,
-                                self.origin_width, self.origin_height,
-                            ]
-                            r_row = [obj_name, x1, y1, x2, y2]
-                            blocks.append((d_row, r_row, obj_name))
+                    mapping = class_mapping_from_object_list(self.object_list)
+                    annotations = import_yolo_hbb_label_file(
+                        filePath,
+                        class_mapping=mapping,
+                        image_w=self.origin_width,
+                        image_h=self.origin_height,
+                    )
+                    blocks = legacy_blocks_from_annotations(
+                        annotations,
+                        class_mapping=mapping,
+                        canvas_w=self.origin_width,
+                        canvas_h=self.origin_height,
+                    )
                     if blocks:
-                        self._annotation_controller.apply(BulkAppendBoxesCommand(blocks))
+                        self._gt_actions.append_blocks(blocks)
                     else:
-                        self.label_list.setText(
-                            f'Box Labels  (Total: {len(self.real_data)})'
-                        )
-                except (ValueError, IndexError, KeyError):
+                        self.gt_list_view.set_total(len(self.real_data))
+                except (OSError, ValueError, IndexError):
                     self.mbox = QtWidgets.QMessageBox(self)
                     self.mbox.setText('This file is not in YOLO label format!')
                     self.mbox.setIcon(QtWidgets.QMessageBox.Icon.Critical)

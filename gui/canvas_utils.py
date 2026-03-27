@@ -25,6 +25,38 @@ def draw_bboxes_on_canvas(canvas: QPixmap, bbox_datas: list) -> None:
     qpainter.end()
 
 
+def draw_selection_overlay(
+    canvas: QPixmap,
+    *,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    fill_color: QColor | None = None,
+    outline_color: QColor | None = None,
+    handle_size: int = 6,
+) -> None:
+    """Draw a highlighted selection box with corner handles."""
+    left = min(int(x1), int(x2))
+    top = min(int(y1), int(y2))
+    right = max(int(x1), int(x2))
+    bottom = max(int(y1), int(y2))
+    width = max(0, right - left)
+    height = max(0, bottom - top)
+    outline = outline_color or QColor(30, 144, 255)
+
+    qpainter = QPainter()
+    qpainter.begin(canvas)
+    if fill_color is not None:
+        qpainter.fillRect(left, top, width + 1, height + 1, fill_color)
+    qpainter.setPen(QPen(outline, 1))
+    qpainter.drawRect(left, top, width, height)
+    half = max(1, handle_size // 2)
+    for px, py in ((left, top), (right, top), (left, bottom), (right, bottom)):
+        qpainter.fillRect(px - half, py - half, handle_size, handle_size, outline)
+    qpainter.end()
+
+
 def draw_paste_images_on_canvas(canvas: QPixmap, paste_images: list) -> None:
     """Draw paste images onto canvas."""
     from PyQt6.QtCore import QRect

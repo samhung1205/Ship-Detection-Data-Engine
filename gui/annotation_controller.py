@@ -8,6 +8,8 @@ from __future__ import annotations
 import copy
 from typing import Any, List, Protocol, Tuple
 
+from sdde.document import AnnotationBoxState
+
 
 MAX_UNDO = 50
 
@@ -23,18 +25,12 @@ class AnnotationCommand(Protocol):
 
 def _refresh_canvas(w: Any) -> None:
     """Redraw scaled image + bbox / paste overlays (respects Hide Box)."""
-    w.label_list.setText(f'Box Labels  (Total: {len(w.real_data)})')
+    w.gt_list_view.set_total(len(w.real_data))
     w.set_img_ratio()
 
 
-def _append_box_attribute_row(w: Any) -> None:
-    if hasattr(w, "append_box_attributes_row"):
-        w.append_box_attributes_row()
-
-
-def _pop_last_box_attribute_row(w: Any) -> None:
-    if hasattr(w, "box_attributes") and w.box_attributes:
-        w.box_attributes.pop()
+def _gt_document(w: Any):
+    return w.gt_document
 
 
 class AddBoxCommand:
@@ -54,22 +50,20 @@ class AddBoxCommand:
         self._extended_object_list = extended_object_list
 
     def apply(self, w: Any) -> None:
-        w.listwidget.addItem(self._label_text)
+        doc = _gt_document(w)
+        w.gt_list_view.add_item(self._label_text)
         if self._extended_object_list:
             w.object_list.append(self._label_text)
-        w.data.append(copy.deepcopy(self._data_row))
-        w.real_data.append(copy.deepcopy(self._real_row))
+        doc.append_box(self._data_row, self._real_row)
         # Prefer full redraw over partial canvas hacks (matches set_img_ratio pipeline).
         if w.hideBox.isChecked():
             w.hideBox.setChecked(False)
-        _append_box_attribute_row(w)
         _refresh_canvas(w)
 
     def unapply(self, w: Any) -> None:
-        _pop_last_box_attribute_row(w)
-        w.data.pop()
-        w.real_data.pop()
-        w.listwidget.takeItem(w.listwidget.count() - 1)
+        doc = _gt_document(w)
+        doc.remove_box(-1)
+        w.gt_list_view.remove_item(w.gt_list_view.count() - 1)
         if self._extended_object_list:
             w.object_list.pop()
         _refresh_canvas(w)
@@ -80,35 +74,25 @@ class RemoveBoxCommand:
 
     def __init__(self, index: int) -> None:
         self._index = index
-        self._saved_data: list | None = None
-        self._saved_real: list | None = None
+        self._saved_state: AnnotationBoxState | None = None
         self._saved_label: str | None = None
-        self._saved_attr: dict | None = None
 
     def apply(self, w: Any) -> None:
+        doc = _gt_document(w)
         i = self._index
-        self._saved_data = copy.deepcopy(w.data[i])
-        self._saved_real = copy.deepcopy(w.real_data[i])
-        self._saved_label = w.listwidget.item(i).text()
-        if hasattr(w, "box_attributes") and i < len(w.box_attributes):
-            self._saved_attr = copy.deepcopy(w.box_attributes.pop(i))
-        else:
-            self._saved_attr = None
-        w.data.pop(i)
-        w.real_data.pop(i)
-        w.listwidget.takeItem(i)
+        self._saved_label = w.gt_list_view.item_text(i)
+        self._saved_state = doc.remove_box(i)
+        w.gt_list_view.remove_item(i)
         w.hideBox.setChecked(False)
         _refresh_canvas(w)
 
     def unapply(self, w: Any) -> None:
-        assert self._saved_data is not None and self._saved_real is not None
+        doc = _gt_document(w)
+        assert self._saved_state is not None
         assert self._saved_label is not None
         i = self._index
-        w.data.insert(i, copy.deepcopy(self._saved_data))
-        w.real_data.insert(i, copy.deepcopy(self._saved_real))
-        w.listwidget.insertItem(i, self._saved_label)
-        if self._saved_attr is not None and hasattr(w, "box_attributes"):
-            w.box_attributes.insert(i, copy.deepcopy(self._saved_attr))
+        doc.insert_box(i, self._saved_state)
+        w.gt_list_view.insert_item(i, self._saved_label)
         _refresh_canvas(w)
 
 
@@ -116,34 +100,25 @@ class ClearAllBoxesCommand:
     """Delete all box annotations (not paste images)."""
 
     def __init__(self) -> None:
-        self._snap_data: List[list] = []
-        self._snap_real: List[list] = []
+        self._snapshot = None
         self._labels: List[str] = []
-        self._snap_attrs: List[dict] = []
 
     def apply(self, w: Any) -> None:
-        self._snap_data = copy.deepcopy(w.data)
-        self._snap_real = copy.deepcopy(w.real_data)
-        self._labels = [w.listwidget.item(i).text() for i in range(w.listwidget.count())]
-        if hasattr(w, "box_attributes"):
-            self._snap_attrs = copy.deepcopy(w.box_attributes)
-            w.box_attributes.clear()
-        else:
-            self._snap_attrs = []
-        w.data.clear()
-        w.real_data.clear()
-        w.listwidget.clear()
+        doc = _gt_document(w)
+        self._snapshot = doc.snapshot()
+        self._labels = [w.gt_list_view.item_text(i) for i in range(w.gt_list_view.count())]
+        doc.clear()
+        w.gt_list_view.clear()
         w.hideBox.setChecked(False)
         _refresh_canvas(w)
 
     def unapply(self, w: Any) -> None:
-        w.data[:] = copy.deepcopy(self._snap_data)
-        w.real_data[:] = copy.deepcopy(self._snap_real)
-        w.listwidget.clear()
+        doc = _gt_document(w)
+        assert self._snapshot is not None
+        doc.restore(self._snapshot)
+        w.gt_list_view.clear()
         for t in self._labels:
-            w.listwidget.addItem(t)
-        if hasattr(w, "box_attributes"):
-            w.box_attributes[:] = copy.deepcopy(self._snap_attrs)
+            w.gt_list_view.add_item(t)
         _refresh_canvas(w)
 
 
@@ -157,10 +132,10 @@ class RenameBoxCommand:
         self._extended_object_list = False
 
     def apply(self, w: Any) -> None:
+        doc = _gt_document(w)
         i = self._index
-        w.data[i][0] = self._new_name
-        w.real_data[i][0] = self._new_name
-        w.listwidget.item(i).setText(self._new_name)
+        doc.rename_box(i, self._new_name)
+        w.gt_list_view.rename_item(i, self._new_name)
         self._extended_object_list = False
         if self._new_name not in w.object_list:
             w.object_list.append(self._new_name)
@@ -168,12 +143,43 @@ class RenameBoxCommand:
         _refresh_canvas(w)
 
     def unapply(self, w: Any) -> None:
+        doc = _gt_document(w)
         i = self._index
-        w.data[i][0] = self._old_name
-        w.real_data[i][0] = self._old_name
-        w.listwidget.item(i).setText(self._old_name)
+        doc.rename_box(i, self._old_name)
+        w.gt_list_view.rename_item(i, self._old_name)
         if self._extended_object_list:
             w.object_list.remove(self._new_name)
+        _refresh_canvas(w)
+
+
+class UpdateBoxGeometryCommand:
+    """Replace one GT box geometry while preserving label + attributes."""
+
+    def __init__(self, index: int, data_row: list, real_row: list) -> None:
+        self._index = index
+        self._next_state = AnnotationBoxState(
+            data_row=copy.deepcopy(data_row),
+            real_row=copy.deepcopy(real_row),
+            attributes={},
+        )
+        self._previous_state: AnnotationBoxState | None = None
+
+    def apply(self, w: Any) -> None:
+        doc = _gt_document(w)
+        if self._previous_state is None:
+            self._previous_state = doc.box_state(self._index)
+            self._next_state = AnnotationBoxState(
+                data_row=copy.deepcopy(self._next_state.data_row),
+                real_row=copy.deepcopy(self._next_state.real_row),
+                attributes=copy.deepcopy(self._previous_state.attributes),
+            )
+        doc.replace_box(self._index, self._next_state)
+        _refresh_canvas(w)
+
+    def unapply(self, w: Any) -> None:
+        doc = _gt_document(w)
+        assert self._previous_state is not None
+        doc.replace_box(self._index, self._previous_state)
         _refresh_canvas(w)
 
 
@@ -185,21 +191,19 @@ class BulkAppendBoxesCommand:
         self._blocks = [(copy.deepcopy(d), copy.deepcopy(r), n) for d, r, n in blocks]
 
     def apply(self, w: Any) -> None:
+        doc = _gt_document(w)
         for d_row, r_row, name in self._blocks:
-            w.data.append(copy.deepcopy(d_row))
-            w.real_data.append(copy.deepcopy(r_row))
-            w.listwidget.addItem(name)
-            _append_box_attribute_row(w)
+            w.gt_list_view.add_item(name)
+        doc.append_boxes(self._blocks)
         w.hideBox.setChecked(False)
         _refresh_canvas(w)
 
     def unapply(self, w: Any) -> None:
+        doc = _gt_document(w)
         n = len(self._blocks)
         for _ in range(n):
-            _pop_last_box_attribute_row(w)
-            w.data.pop()
-            w.real_data.pop()
-            w.listwidget.takeItem(w.listwidget.count() - 1)
+            doc.remove_box(-1)
+            w.gt_list_view.remove_item(w.gt_list_view.count() - 1)
         _refresh_canvas(w)
 
 
@@ -219,6 +223,43 @@ class AnnotationController:
         if len(self._undo) > MAX_UNDO:
             self._undo.pop(0)
         self._redo.clear()
+
+    def add_box(
+        self,
+        data_row: list,
+        real_row: list,
+        label_text: str,
+        *,
+        extended_object_list: bool,
+    ) -> None:
+        self.apply(
+            AddBoxCommand(
+                data_row,
+                real_row,
+                label_text,
+                extended_object_list=extended_object_list,
+            )
+        )
+
+    def remove_box(self, index: int) -> None:
+        self.apply(RemoveBoxCommand(index))
+
+    def clear_all_boxes(self) -> None:
+        self.apply(ClearAllBoxesCommand())
+
+    def rename_box(self, index: int, old_name: str, new_name: str) -> None:
+        self.apply(RenameBoxCommand(index, old_name, new_name))
+
+    def update_box_geometry(
+        self,
+        index: int,
+        data_row: list,
+        real_row: list,
+    ) -> None:
+        self.apply(UpdateBoxGeometryCommand(index, data_row, real_row))
+
+    def append_blocks(self, blocks: List[Tuple[list, list, str]]) -> None:
+        self.apply(BulkAppendBoxesCommand(blocks))
 
     def undo(self) -> None:
         if not self._undo:

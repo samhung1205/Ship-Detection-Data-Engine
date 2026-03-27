@@ -1,5 +1,7 @@
+# Legacy compatibility only.
+# Main class-mapping path uses classes.yaml via ClassMappingDialog.
 train: 
 val: 
 
 nc: 4 
-name: ['Naval', 'Merchant', 'Dock', 'other_vessel']
+name: ['naval', 'merchant', 'dock', 'other_vessel']

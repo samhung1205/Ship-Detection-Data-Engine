@@ -1,14 +1,14 @@
 project_name: ship_detection_project
 classes:
-  - class_id: 0
-    class_name: naval
-    super_category: vessel
-  - class_id: 1
-    class_name: merchant
-    super_category: vessel
-  - class_id: 2
-    class_name: dock
-    super_category: facility
-  - class_id: 3
-    class_name: other_vessel
-    super_category: vessel
+- class_id: 0
+  class_name: naval
+  super_category: vessel
+- class_id: 1
+  class_name: merchant
+  super_category: vessel
+- class_id: 2
+  class_name: dock
+  super_category: facility
+- class_id: 3
+  class_name: other_vessel
+  super_category: vessel
