@@ -35,6 +35,7 @@ class PasteCandidateSession:
 
     anchor_x: int | None = None
     anchor_y: int | None = None
+    smart_zone_rect: tuple[int, int, int, int] | None = None
 
     @property
     def has_anchor(self) -> bool:
@@ -63,4 +64,5 @@ class PasteCandidateSession:
         self.pasteimg_width = 0
         self.pasteimg_height = 0
         self.pasteimg_channel = 0
+        self.smart_zone_rect = None
         self.clear_candidate()

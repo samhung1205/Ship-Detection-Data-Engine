@@ -28,6 +28,12 @@ class _AttrPanel:
             "size_tag": "medium",
             "crowded": "false",
             "difficulty_tag": "normal",
+            "hard_sample": "false",
+            "occluded": "false",
+            "truncated": "false",
+            "blurred": "false",
+            "difficult_background": "false",
+            "low_contrast": "false",
             "scene_tag": "unknown",
         }
         self.combo_size = _Combo()
@@ -113,9 +119,13 @@ def test_workspace_controller_updates_document_from_attr_panel() -> None:
 
     list_view.set_current_row(0)
     panel.values["crowded"] = "true"
+    panel.values["hard_sample"] = "true"
+    panel.values["occluded"] = "true"
     controller.on_attr_panel_changed()
 
     assert doc.box_attributes[0]["crowded"] == "true"
+    assert doc.box_attributes[0]["hard_sample"] == "true"
+    assert doc.box_attributes[0]["occluded"] == "true"
 
 
 def test_workspace_controller_recalculates_size_tag_for_selection() -> None:

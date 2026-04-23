@@ -46,6 +46,12 @@ def test_annotation_document_append_box_creates_default_attributes() -> None:
     assert state.real_row == ["naval", 10, 20, 30, 40]
     assert doc.box_attributes[0]["size_tag"] == "small"
     assert doc.box_attributes[0]["crowded"] == "false"
+    assert doc.box_attributes[0]["hard_sample"] == "false"
+    assert doc.box_attributes[0]["occluded"] == "false"
+    assert doc.box_attributes[0]["truncated"] == "false"
+    assert doc.box_attributes[0]["blurred"] == "false"
+    assert doc.box_attributes[0]["difficult_background"] == "false"
+    assert doc.box_attributes[0]["low_contrast"] == "false"
 
 
 def test_annotation_document_set_box_attributes_fills_missing_defaults() -> None:
@@ -60,6 +66,12 @@ def test_annotation_document_set_box_attributes_fills_missing_defaults() -> None
     assert doc.box_attributes[0]["crowded"] == "true"
     assert doc.box_attributes[0]["difficulty_tag"] == "normal"
     assert doc.box_attributes[0]["size_tag"] == "small"
+    assert doc.box_attributes[0]["hard_sample"] == "false"
+    assert doc.box_attributes[0]["occluded"] == "false"
+    assert doc.box_attributes[0]["truncated"] == "false"
+    assert doc.box_attributes[0]["blurred"] == "false"
+    assert doc.box_attributes[0]["difficult_background"] == "false"
+    assert doc.box_attributes[0]["low_contrast"] == "false"
 
 
 def test_annotation_document_replace_updates_selected_sections_in_place() -> None:
@@ -197,7 +209,17 @@ def test_annotation_document_build_metadata_records_uses_current_gt_state() -> N
         ["naval", 1, 2, 3, 4, 100, 100],
         ["naval", 10, 20, 30, 40],
     )
-    doc.set_box_attributes(0, {"crowded": "true"})
+    doc.set_box_attributes(
+        0,
+        {
+            "crowded": "true",
+            "hard_sample": "true",
+            "occluded": "true",
+            "truncated": "false",
+            "blurred": "true",
+            "difficult_background": "true",
+        },
+    )
 
     recs = doc.build_metadata_records(
         image_path="/tmp/a.jpg",
@@ -210,6 +232,12 @@ def test_annotation_document_build_metadata_records_uses_current_gt_state() -> N
     assert recs[0]["class_id"] == 0
     assert recs[0]["super_category"] == "vessel"
     assert recs[0]["crowded"] == "true"
+    assert recs[0]["hard_sample"] == "true"
+    assert recs[0]["occluded"] == "true"
+    assert recs[0]["truncated"] == "false"
+    assert recs[0]["blurred"] == "true"
+    assert recs[0]["difficult_background"] == "true"
+    assert recs[0]["low_contrast"] == "false"
 
 
 def test_annotation_document_validate_alignment_accepts_aligned_lists() -> None:

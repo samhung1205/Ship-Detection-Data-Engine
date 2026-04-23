@@ -75,3 +75,31 @@ def load_project_config(path: str | Path) -> ProjectConfig:
         tile_size=int(raw.get("tile_size", 640)),
         tile_stride=int(raw.get("tile_stride", 480)),
     )
+
+
+def resolve_project_root(
+    cfg: ProjectConfig,
+    *,
+    config_path: str | Path | None = None,
+    cwd: str | Path | None = None,
+) -> Path:
+    base_dir = Path(cwd or Path.cwd())
+    if config_path is not None:
+        base_dir = Path(config_path).expanduser().resolve().parent
+    project_root = Path(cfg.project_root or ".").expanduser()
+    if project_root.is_absolute():
+        return project_root
+    return (base_dir / project_root).resolve()
+
+
+def resolve_project_path(
+    cfg: ProjectConfig,
+    value: str | Path,
+    *,
+    config_path: str | Path | None = None,
+    cwd: str | Path | None = None,
+) -> Path:
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    return resolve_project_root(cfg, config_path=config_path, cwd=cwd) / path

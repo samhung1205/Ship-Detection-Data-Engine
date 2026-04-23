@@ -54,7 +54,7 @@ class AnnotationListController:
             return
         names = list(self._get_object_names())
         text, ok = QtWidgets.QInputDialog().getItem(
-            self._parent, '', 'Enter object name', names, 0
+            self._parent, '', 'Enter object name', names, 0, False
         )
         if not ok:
             return

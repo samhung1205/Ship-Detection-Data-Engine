@@ -18,6 +18,7 @@ from gui.annotation_controller import (  # noqa: E402
     MAX_UNDO,
     RemoveBoxCommand,
     RenameBoxCommand,
+    ReplaceAllBoxesCommand,
     UpdateBoxGeometryCommand,
 )
 
@@ -238,7 +239,53 @@ def test_update_box_geometry_undo_redo_restores_previous_rows() -> None:
 
     c.redo()
 
-    assert w.real_data[0] == ["naval", 50, 60, 250, 300]
+
+def test_replace_all_boxes_command_restores_previous_snapshot_on_undo() -> None:
+    w = _FakeW()
+    c = AnnotationController(w)
+    _apply_add(c, "naval", extended_object_list=True)
+    _apply_add(c, "merchant", extended_object_list=True)
+
+    c.apply(
+        ReplaceAllBoxesCommand(
+            [
+                (
+                    ["dock", 5, 5, 6, 6, 100, 100],
+                    ["dock", 50, 50, 60, 60],
+                    "dock",
+                )
+            ]
+        )
+    )
+
+    assert [row[0] for row in w.real_data] == ["dock"]
+    assert w.listwidget.count() == 1
+    assert w.listwidget.item(0).text() == "dock"
+
+    c.undo()
+
+    assert [row[0] for row in w.real_data] == ["naval", "merchant"]
+    assert [w.listwidget.item(i).text() for i in range(2)] == ["naval", "merchant"]
+
+    c.redo()
+
+    assert [row[0] for row in w.real_data] == ["dock"]
+
+
+def test_replace_all_boxes_accepts_empty_import_and_can_undo() -> None:
+    w = _FakeW()
+    c = AnnotationController(w)
+    _apply_add(c, "naval", extended_object_list=True)
+
+    c.replace_all_boxes([])
+
+    assert w.real_data == []
+    assert w.listwidget.count() == 0
+    assert w.label_list.text == "Box Labels  (Total: 0)"
+
+    c.undo()
+
+    assert [row[0] for row in w.real_data] == ["naval"]
 
 
 def test_clear_all_undo_redo_restores_boxes_labels_and_attributes() -> None:
@@ -329,6 +376,9 @@ def test_controller_helper_methods_route_to_command_objects() -> None:
     c.append_blocks(
         [(["naval", 1, 1, 2, 2, 100, 100], ["naval", 10, 10, 20, 20], "naval")]
     )
+    c.replace_all_boxes(
+        [(["dock", 3, 3, 4, 4, 100, 100], ["dock", 30, 30, 40, 40], "dock")]
+    )
 
     assert seen == [
         "AddBoxCommand",
@@ -337,6 +387,7 @@ def test_controller_helper_methods_route_to_command_objects() -> None:
         "UpdateBoxGeometryCommand",
         "ClearAllBoxesCommand",
         "BulkAppendBoxesCommand",
+        "ReplaceAllBoxesCommand",
     ]
 
 

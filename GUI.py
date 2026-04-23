@@ -3,6 +3,7 @@ ImgLab and ImgBlending - Entry point.
 Run: python GUI.py
 """
 import sys
+
 from PyQt6 import QtWidgets
 
 from gui import MyWidget

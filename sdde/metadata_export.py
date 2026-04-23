@@ -8,6 +8,8 @@ import io
 import json
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from .attributes import compute_size_tag, normalize_attributes
+
 
 def _class_id_for_name(name: str, object_list: Sequence[str]) -> Optional[int]:
     try:
@@ -28,14 +30,18 @@ def build_annotation_records(
 ) -> List[Dict[str, Any]]:
     """
     real_data rows: [name, x1, y1, x2, y2]
-    box_attributes[i]: size_tag, crowded, difficulty_tag, scene_tag
+    box_attributes[i]: size_tag, crowded, difficulty_tag, hard_sample,
+    occluded, truncated, blurred, difficult_background, low_contrast, scene_tag
     """
     rows: List[Dict[str, Any]] = []
     for i, r in enumerate(real_data):
         name = str(r[0])
         x1, y1, x2, y2 = (float(r[1]), float(r[2]), float(r[3]), float(r[4]))
         cid = _class_id_for_name(name, object_list)
-        attrs = dict(box_attributes[i]) if i < len(box_attributes) else {}
+        raw_attrs = box_attributes[i] if i < len(box_attributes) else {}
+        attrs = normalize_attributes(raw_attrs)
+        if not str(raw_attrs.get("size_tag", "")).strip():
+            attrs["size_tag"] = compute_size_tag(x1, y1, x2, y2)
         rec: Dict[str, Any] = {
             "image_path": image_path,
             "image_width": image_width,
@@ -47,10 +53,16 @@ def build_annotation_records(
             "y1": y1,
             "x2": x2,
             "y2": y2,
-            "size_tag": attrs.get("size_tag", "medium"),
-            "crowded": attrs.get("crowded", "false"),
-            "difficulty_tag": attrs.get("difficulty_tag", "normal"),
-            "scene_tag": attrs.get("scene_tag", "unknown"),
+            "size_tag": attrs["size_tag"],
+            "crowded": attrs["crowded"],
+            "difficulty_tag": attrs["difficulty_tag"],
+            "hard_sample": attrs["hard_sample"],
+            "occluded": attrs["occluded"],
+            "truncated": attrs["truncated"],
+            "blurred": attrs["blurred"],
+            "difficult_background": attrs["difficult_background"],
+            "low_contrast": attrs["low_contrast"],
+            "scene_tag": attrs["scene_tag"],
         }
         rows.append(rec)
     return rows

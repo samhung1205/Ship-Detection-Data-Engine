@@ -1,4 +1,4 @@
-"""Tests for tile grid computation, coord conversion, and annotations_in_tile."""
+"""Tests for tile grid computation, coord conversion, and tile overlap helpers."""
 
 import pytest
 
@@ -6,7 +6,10 @@ from sdde.tile import (
     TileConfig,
     TileRect,
     annotations_in_tile,
+    boundary_crossing_annotations,
     compute_tile_grid,
+    find_neighbor_tile_index,
+    find_tile_index_by_point,
     global_to_tile,
     tile_to_global,
 )
@@ -79,3 +82,40 @@ def test_annotations_in_tile_partial() -> None:
     assert 0 in inside
     outside = annotations_in_tile(t, real_data, min_visible_fraction=0.5)
     assert 0 not in outside
+
+
+def test_boundary_crossing_annotations_detects_box_spanning_tile_edge() -> None:
+    t = TileRect(index=0, col=0, row=0, x=100, y=100, w=100, h=100)
+    real_data = [
+        ["inside", 120, 120, 180, 180],
+        ["cross_left", 80, 120, 130, 180],
+        ["cross_bottom", 120, 160, 180, 230],
+    ]
+    result = boundary_crossing_annotations(t, real_data)
+    assert result == [1, 2]
+
+
+def test_boundary_crossing_annotations_ignores_non_visible_boxes() -> None:
+    t = TileRect(index=0, col=0, row=0, x=0, y=0, w=100, h=100)
+    real_data = [
+        ["touch_only", 100, 0, 130, 50],  # zero-width intersection
+        ["outside", 150, 150, 200, 200],
+    ]
+    assert boundary_crossing_annotations(t, real_data) == []
+
+
+def test_find_tile_index_by_point_returns_matching_tile() -> None:
+    tiles = compute_tile_grid(200, 200, TileConfig(tile_size=100, tile_stride=100))
+    assert find_tile_index_by_point(tiles, 30, 40) == 0
+    assert find_tile_index_by_point(tiles, 120, 40) == 1
+    assert find_tile_index_by_point(tiles, 30, 140) == 2
+    assert find_tile_index_by_point(tiles, 240, 40) is None
+
+
+def test_find_neighbor_tile_index_moves_spatially() -> None:
+    tiles = compute_tile_grid(200, 200, TileConfig(tile_size=100, tile_stride=100))
+    assert find_neighbor_tile_index(tiles, current_index=0, delta_col=1) == 1
+    assert find_neighbor_tile_index(tiles, current_index=0, delta_row=1) == 2
+    assert find_neighbor_tile_index(tiles, current_index=3, delta_col=-1) == 2
+    assert find_neighbor_tile_index(tiles, current_index=3, delta_row=-1) == 1
+    assert find_neighbor_tile_index(tiles, current_index=0, delta_col=-1) is None

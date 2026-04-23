@@ -10,7 +10,7 @@ import csv
 import io
 import uuid
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from .prediction import PredictionRecord
 
@@ -23,6 +23,7 @@ ERROR_DUPLICATE = "Duplicate"
 ERROR_TP = "TP"
 
 ALL_ERROR_TYPES = (ERROR_TP, ERROR_FP, ERROR_FN, ERROR_WRONG_CLASS, ERROR_LOCALIZATION, ERROR_DUPLICATE)
+ERROR_FILTER_ALL = "All"
 
 
 def iou_xyxy(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
@@ -52,6 +53,7 @@ class ErrorCase:
     gt_class: str = ""
     pred_class: str = ""
     confidence: float = 0.0
+    gt_attrs: Mapping[str, str] | None = None
     notes: str = ""
     bookmarked: bool = False
 
@@ -60,6 +62,7 @@ def match_gt_pred(
     gt_boxes: Sequence[tuple[str, float, float, float, float]],
     predictions: Sequence[PredictionRecord],
     *,
+    gt_attributes: Sequence[Mapping[str, str]] | None = None,
     iou_threshold: float = 0.5,
     localization_low: float = 0.1,
     image_id: str = "",
@@ -124,6 +127,7 @@ def match_gt_pred(
                 gt_class=gt_boxes[gi][0],
                 pred_class=predictions[pi].class_name,
                 confidence=predictions[pi].confidence,
+                gt_attrs=_normalized_gt_attrs(gi, gt_attributes),
             ))
             pred_matched[pi] = gi
             continue
@@ -150,6 +154,7 @@ def match_gt_pred(
             gt_class=gt_cls,
             pred_class=pred_cls,
             confidence=predictions[pi].confidence,
+            gt_attrs=_normalized_gt_attrs(gi, gt_attributes),
         ))
         gt_matched[gi] = pi
         pred_matched[pi] = gi
@@ -173,6 +178,7 @@ def match_gt_pred(
                 error_type=ERROR_FN,
                 iou=0.0,
                 gt_class=gt_boxes[gi][0],
+                gt_attrs=_normalized_gt_attrs(gi, gt_attributes),
             ))
 
     return cases
@@ -184,6 +190,90 @@ def summarise_error_cases(cases: Sequence[ErrorCase]) -> dict[str, int]:
     for c in cases:
         counts[c.error_type] = counts.get(c.error_type, 0) + 1
     return counts
+
+
+def filter_error_cases(
+    cases: Sequence[ErrorCase],
+    *,
+    error_type: str = ERROR_FILTER_ALL,
+    bookmarked_only: bool = False,
+    gt_attributes: Sequence[Mapping[str, str]] | None = None,
+    size_tag: str = ERROR_FILTER_ALL,
+    scene_tag: str = ERROR_FILTER_ALL,
+    difficulty_tag: str = ERROR_FILTER_ALL,
+    crowded: str = ERROR_FILTER_ALL,
+    hard_sample: str = ERROR_FILTER_ALL,
+    occluded: str = ERROR_FILTER_ALL,
+    truncated: str = ERROR_FILTER_ALL,
+    blurred: str = ERROR_FILTER_ALL,
+) -> list[ErrorCase]:
+    """Return cases filtered by error type, bookmark state, and optional GT attributes."""
+    out: list[ErrorCase] = []
+    filter_all = error_type in ("", ERROR_FILTER_ALL)
+    for case in cases:
+        if not filter_all and case.error_type != error_type:
+            continue
+        if bookmarked_only and not case.bookmarked:
+            continue
+        attrs = _gt_attributes_for_case(case, gt_attributes)
+        if size_tag not in ("", ERROR_FILTER_ALL) and (attrs is None or attrs.get("size_tag") != size_tag):
+            continue
+        if scene_tag not in ("", ERROR_FILTER_ALL) and (attrs is None or attrs.get("scene_tag") != scene_tag):
+            continue
+        if difficulty_tag not in ("", ERROR_FILTER_ALL) and (attrs is None or attrs.get("difficulty_tag") != difficulty_tag):
+            continue
+        if crowded not in ("", ERROR_FILTER_ALL) and (attrs is None or attrs.get("crowded") != crowded):
+            continue
+        if hard_sample not in ("", ERROR_FILTER_ALL) and (attrs is None or attrs.get("hard_sample") != hard_sample):
+            continue
+        if occluded not in ("", ERROR_FILTER_ALL) and (attrs is None or attrs.get("occluded") != occluded):
+            continue
+        if truncated not in ("", ERROR_FILTER_ALL) and (attrs is None or attrs.get("truncated") != truncated):
+            continue
+        if blurred not in ("", ERROR_FILTER_ALL) and (attrs is None or attrs.get("blurred") != blurred):
+            continue
+        out.append(case)
+    return out
+
+
+def gt_attributes_for_case(
+    case: ErrorCase,
+    gt_attributes: Sequence[Mapping[str, str]] | None,
+) -> dict[str, str] | None:
+    """
+    Return normalised GT attributes for one error case when a GT row exists.
+
+    FP-only cases have no GT index, so they return ``None``.
+    """
+    return _gt_attributes_for_case(case, gt_attributes)
+
+
+def _gt_attributes_for_case(
+    case: ErrorCase,
+    gt_attributes: Sequence[Mapping[str, str]] | None,
+) -> dict[str, str] | None:
+    if case.gt_attrs is not None:
+        from .attributes import normalize_attributes
+
+        return normalize_attributes(case.gt_attrs)
+    if gt_attributes is None or case.gt_index is None:
+        return None
+    if case.gt_index < 0 or case.gt_index >= len(gt_attributes):
+        return None
+    from .attributes import normalize_attributes
+
+    return normalize_attributes(gt_attributes[case.gt_index])
+
+
+def _normalized_gt_attrs(
+    gt_index: int,
+    gt_attributes: Sequence[Mapping[str, str]] | None,
+) -> dict[str, str] | None:
+    if gt_attributes is None or gt_index < 0 or gt_index >= len(gt_attributes):
+        return None
+    from .attributes import normalize_attributes
+
+    return normalize_attributes(gt_attributes[gt_index])
 
 
 _CSV_FIELDS = [

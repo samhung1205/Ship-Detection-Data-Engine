@@ -1,4 +1,4 @@
-project_name: ship_detection_project
+project_name: ship_detection
 classes:
 - class_id: 0
   class_name: naval

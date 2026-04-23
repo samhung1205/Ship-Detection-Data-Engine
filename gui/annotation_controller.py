@@ -207,6 +207,37 @@ class BulkAppendBoxesCommand:
         _refresh_canvas(w)
 
 
+class ReplaceAllBoxesCommand:
+    """Replace the whole GT set with imported blocks in one undoable step."""
+
+    def __init__(self, blocks: List[Tuple[list, list, str]]) -> None:
+        self._blocks = [(copy.deepcopy(d), copy.deepcopy(r), n) for d, r, n in blocks]
+        self._snapshot = None
+        self._labels: List[str] = []
+
+    def apply(self, w: Any) -> None:
+        doc = _gt_document(w)
+        if self._snapshot is None:
+            self._snapshot = doc.snapshot()
+            self._labels = [w.gt_list_view.item_text(i) for i in range(w.gt_list_view.count())]
+        doc.clear()
+        w.gt_list_view.clear()
+        for d_row, r_row, name in self._blocks:
+            w.gt_list_view.add_item(name)
+        doc.append_boxes(self._blocks)
+        w.hideBox.setChecked(False)
+        _refresh_canvas(w)
+
+    def unapply(self, w: Any) -> None:
+        doc = _gt_document(w)
+        assert self._snapshot is not None
+        doc.restore(self._snapshot)
+        w.gt_list_view.clear()
+        for label in self._labels:
+            w.gt_list_view.add_item(label)
+        _refresh_canvas(w)
+
+
 class AnnotationController:
     def __init__(self, widget: Any) -> None:
         self._w = widget
@@ -260,6 +291,9 @@ class AnnotationController:
 
     def append_blocks(self, blocks: List[Tuple[list, list, str]]) -> None:
         self.apply(BulkAppendBoxesCommand(blocks))
+
+    def replace_all_boxes(self, blocks: List[Tuple[list, list, str]]) -> None:
+        self.apply(ReplaceAllBoxesCommand(blocks))
 
     def undo(self) -> None:
         if not self._undo:

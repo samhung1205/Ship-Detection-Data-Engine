@@ -15,6 +15,31 @@ from datetime import datetime, timezone
 from typing import Sequence
 
 
+@dataclass(frozen=True)
+class PasteAdjustments:
+    """Typed paste-preview controls from the GUI."""
+
+    scale_slider: int = 50
+    rotation_deg: int = 0
+    brightness: int = 100
+    contrast: int = 100
+    blur_radius: int = 0
+    opacity_pct: int = 100
+    feather_radius: int = 0
+    h_flip: bool = False
+    v_flip: bool = False
+    shadow_enabled: bool = False
+    shadow_opacity_pct: int = 40
+    shadow_offset_px: int = 8
+    motion_blur_enabled: bool = False
+    motion_blur_length: int = 9
+    motion_blur_angle_deg: int = 0
+
+    @property
+    def scale_factor(self) -> float:
+        return pow(10, (self.scale_slider - 50) / 50)
+
+
 @dataclass
 class PasteRecord:
     """One copy-paste augmentation operation."""
@@ -27,8 +52,18 @@ class PasteRecord:
     scale: float = 1.0
     rotation_deg: float = 0.0
     h_flip: bool = False
+    v_flip: bool = False
     brightness: int = 100
     contrast: int = 100
+    blur_radius: int = 0
+    opacity_pct: int = 100
+    feather_radius: int = 0
+    shadow_enabled: bool = False
+    shadow_opacity_pct: int = 40
+    shadow_offset_px: int = 8
+    motion_blur_enabled: bool = False
+    motion_blur_length: int = 9
+    motion_blur_angle_deg: int = 0
 
     # resulting bbox in origin-pixel space
     bbox_x1: int = 0
@@ -70,7 +105,10 @@ def export_paste_records_json(records: Sequence[PasteRecord]) -> str:
 
 _CSV_FIELDS = [
     "paste_id", "image_path", "asset_path", "class_name",
-    "scale", "rotation_deg", "h_flip", "brightness", "contrast",
+    "scale", "rotation_deg", "h_flip", "v_flip",
+    "brightness", "contrast", "blur_radius", "opacity_pct", "feather_radius",
+    "shadow_enabled", "shadow_opacity_pct", "shadow_offset_px",
+    "motion_blur_enabled", "motion_blur_length", "motion_blur_angle_deg",
     "bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2", "timestamp",
 ]
 

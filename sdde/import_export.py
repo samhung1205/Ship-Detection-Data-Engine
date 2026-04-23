@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import List, Literal, Sequence
+from xml.etree import ElementTree as ET
 
+from .attributes import normalize_attributes
 from .models import ClassMapping, HBBAnnotation, HBBBoxPx, HBBBoxYoloNorm
 
 
@@ -79,6 +82,273 @@ def import_yolo_hbb_label_file(
     p = Path(path)
     content = p.read_text(encoding="utf-8")
     return parse_yolo_hbb_txt(content, class_mapping=class_mapping, image_w=image_w, image_h=image_h)
+
+
+def parse_coco_bbox_json(
+    content: str,
+    *,
+    class_mapping: ClassMapping,
+    image_w: int,
+    image_h: int,
+    image_path: str | Path | None = None,
+) -> List[HBBAnnotation]:
+    """
+    Parse a COCO bbox JSON payload and return annotations for the current image.
+
+    Supports both:
+    - single-image COCO JSON exported by this project
+    - multi-image COCO datasets, matched by current image filename when possible
+    """
+    class_mapping.validate()
+    if image_w <= 0 or image_h <= 0:
+        raise ValueError("image_w/image_h must be positive")
+
+    payload = json.loads(content)
+    images = payload.get("images")
+    annotations = payload.get("annotations")
+    categories = payload.get("categories")
+    if not isinstance(images, list) or not isinstance(annotations, list) or not isinstance(categories, list):
+        raise ValueError("COCO JSON must contain images, annotations, and categories lists")
+
+    target_image = _select_coco_image_record(images, image_path=image_path)
+    if target_image is None:
+        raise ValueError("Could not find a matching image entry in COCO JSON")
+
+    target_image_id = int(target_image.get("id"))
+    json_w = int(target_image.get("width", image_w) or image_w)
+    json_h = int(target_image.get("height", image_h) or image_h)
+    if json_w != image_w or json_h != image_h:
+        raise ValueError(
+            f"COCO image size {json_w}x{json_h} does not match current image {image_w}x{image_h}"
+        )
+
+    category_id_to_class_id = _build_coco_category_mapping(categories, class_mapping=class_mapping)
+    imported: List[HBBAnnotation] = []
+    for ann in annotations:
+        if int(ann.get("image_id", -1)) != target_image_id:
+            continue
+        bbox = ann.get("bbox")
+        if not isinstance(bbox, list) or len(bbox) < 4:
+            raise ValueError("COCO annotation bbox must be [x, y, w, h]")
+        cat_id = int(ann.get("category_id"))
+        if cat_id not in category_id_to_class_id:
+            raise ValueError(f"Unknown COCO category_id: {cat_id}")
+        x, y, w, h = [float(v) for v in bbox[:4]]
+        attrs = {}
+        if int(ann.get("iscrowd", 0)):
+            attrs["crowded"] = "true"
+        imported.append(
+            HBBAnnotation(
+                class_id=category_id_to_class_id[cat_id],
+                bbox_px=HBBBoxPx(x1=x, y1=y, x2=x + w, y2=y + h),
+                attributes=attrs,
+            )
+        )
+    return imported
+
+
+def import_coco_bbox_json_file(
+    path: str | Path,
+    *,
+    class_mapping: ClassMapping,
+    image_w: int,
+    image_h: int,
+    image_path: str | Path | None = None,
+) -> List[HBBAnnotation]:
+    p = Path(path)
+    content = p.read_text(encoding="utf-8")
+    return parse_coco_bbox_json(
+        content,
+        class_mapping=class_mapping,
+        image_w=image_w,
+        image_h=image_h,
+        image_path=image_path,
+    )
+
+
+def parse_annotation_metadata_json(
+    content: str,
+    *,
+    class_mapping: ClassMapping,
+    image_w: int,
+    image_h: int,
+    image_path: str | Path | None = None,
+) -> List[HBBAnnotation]:
+    """
+    Parse exported annotation metadata JSON records back into annotations.
+    """
+    class_mapping.validate()
+    if image_w <= 0 or image_h <= 0:
+        raise ValueError("image_w/image_h must be positive")
+
+    payload = json.loads(content)
+    if not isinstance(payload, list):
+        raise ValueError("Annotation metadata JSON must be a list of records")
+    if payload and not all(isinstance(rec, dict) for rec in payload):
+        raise ValueError("Annotation metadata JSON records must be objects")
+
+    records = _select_metadata_records(payload, image_path=image_path)
+    if not records:
+        raise ValueError("Could not find matching annotation metadata records for the current image")
+
+    imported: List[HBBAnnotation] = []
+    for rec in records:
+        rec_w = rec.get("image_width")
+        rec_h = rec.get("image_height")
+        if rec_w not in (None, "") and int(rec_w) != image_w:
+            raise ValueError(f"Metadata image_width {rec_w} does not match current image {image_w}")
+        if rec_h not in (None, "") and int(rec_h) != image_h:
+            raise ValueError(f"Metadata image_height {rec_h} does not match current image {image_h}")
+
+        class_name = str(rec.get("class_name", "")).strip()
+        class_id = rec.get("class_id")
+        if class_name and class_name in class_mapping.names:
+            mapped_class_id = class_mapping.name_to_id(class_name)
+        elif class_id not in (None, "") and 0 <= int(class_id) < class_mapping.nc:
+            mapped_class_id = int(class_id)
+        else:
+            raise ValueError(
+                f"Metadata record class cannot be mapped to current classes.yaml: {class_name or class_id}"
+            )
+
+        imported.append(
+            HBBAnnotation(
+                class_id=mapped_class_id,
+                bbox_px=HBBBoxPx(
+                    x1=float(rec["x1"]),
+                    y1=float(rec["y1"]),
+                    x2=float(rec["x2"]),
+                    y2=float(rec["y2"]),
+                ),
+                attributes=normalize_attributes(rec),
+            )
+        )
+    return imported
+
+
+def import_annotation_metadata_json_file(
+    path: str | Path,
+    *,
+    class_mapping: ClassMapping,
+    image_w: int,
+    image_h: int,
+    image_path: str | Path | None = None,
+) -> List[HBBAnnotation]:
+    p = Path(path)
+    content = p.read_text(encoding="utf-8")
+    return parse_annotation_metadata_json(
+        content,
+        class_mapping=class_mapping,
+        image_w=image_w,
+        image_h=image_h,
+        image_path=image_path,
+    )
+
+
+def import_json_label_file(
+    path: str | Path,
+    *,
+    class_mapping: ClassMapping,
+    image_w: int,
+    image_h: int,
+    image_path: str | Path | None = None,
+) -> List[HBBAnnotation]:
+    p = Path(path)
+    content = p.read_text(encoding="utf-8")
+    errors: list[str] = []
+    try:
+        return parse_coco_bbox_json(
+            content,
+            class_mapping=class_mapping,
+            image_w=image_w,
+            image_h=image_h,
+            image_path=image_path,
+        )
+    except (ValueError, TypeError, KeyError, IndexError) as e:
+        errors.append(f"COCO: {e}")
+    try:
+        return parse_annotation_metadata_json(
+            content,
+            class_mapping=class_mapping,
+            image_w=image_w,
+            image_h=image_h,
+            image_path=image_path,
+        )
+    except (ValueError, TypeError, KeyError, IndexError) as e:
+        errors.append(f"Metadata: {e}")
+    raise ValueError("Unsupported JSON label format. " + " | ".join(errors))
+
+
+def _select_coco_image_record(
+    images: Sequence[dict],
+    *,
+    image_path: str | Path | None = None,
+) -> dict | None:
+    if len(images) == 1:
+        image = images[0]
+        return image if isinstance(image, dict) else None
+
+    current_name = Path(image_path).name if image_path else ""
+    if current_name:
+        exact = next(
+            (
+                image for image in images
+                if isinstance(image, dict)
+                and Path(str(image.get("file_name", ""))).name == current_name
+            ),
+            None,
+        )
+        if exact is not None:
+            return exact
+    return None
+
+
+def _select_metadata_records(
+    records: Sequence[dict],
+    *,
+    image_path: str | Path | None = None,
+) -> list[dict]:
+    if not records:
+        return []
+    current_name = Path(image_path).name if image_path else ""
+    if current_name:
+        matched = [
+            rec for rec in records
+            if Path(str(rec.get("image_path", ""))).name == current_name
+        ]
+        if matched:
+            return matched
+    non_empty_names = {
+        Path(str(rec.get("image_path", ""))).name
+        for rec in records
+        if str(rec.get("image_path", "")).strip()
+    }
+    if not non_empty_names:
+        return list(records)
+    if len(non_empty_names) == 1 and (not current_name or current_name in non_empty_names):
+        return list(records)
+    return []
+
+
+def _build_coco_category_mapping(
+    categories: Sequence[dict],
+    *,
+    class_mapping: ClassMapping,
+) -> dict[int, int]:
+    category_id_to_class_id: dict[int, int] = {}
+    for cat in categories:
+        if not isinstance(cat, dict):
+            raise ValueError("COCO categories must be objects")
+        cat_id = int(cat.get("id"))
+        cat_name = str(cat.get("name", "")).strip()
+        if cat_name in class_mapping.names:
+            category_id_to_class_id[cat_id] = class_mapping.name_to_id(cat_name)
+            continue
+        if 0 <= cat_id < class_mapping.nc:
+            category_id_to_class_id[cat_id] = cat_id
+            continue
+        raise ValueError(f"COCO category cannot be mapped to current classes.yaml: {cat_name or cat_id}")
+    return category_id_to_class_id
 
 
 def export_yolo_hbb_txt(
@@ -173,3 +443,123 @@ def export_bbox_txt(
     if include_trailing_newline and out:
         out += "\n"
     return out
+
+
+def export_coco_bbox_json(
+    annotations: Sequence[HBBAnnotation],
+    *,
+    class_mapping: ClassMapping,
+    image_w: int,
+    image_h: int,
+    image_path: str | Path | None = None,
+    image_id: int = 1,
+) -> str:
+    """
+    Export one image's HBB annotations as a COCO-style bbox JSON document.
+    """
+    class_mapping.validate()
+    if image_w <= 0 or image_h <= 0:
+        raise ValueError("image_w/image_h must be positive")
+
+    file_name = Path(image_path).name if image_path else ""
+    payload = {
+        "images": [
+            {
+                "id": image_id,
+                "file_name": file_name,
+                "width": int(image_w),
+                "height": int(image_h),
+            }
+        ],
+        "annotations": [],
+        "categories": [
+            {
+                "id": class_id,
+                "name": class_mapping.id_to_name(class_id),
+                "supercategory": "",
+            }
+            for class_id in range(class_mapping.nc)
+        ],
+    }
+
+    coco_annotations: List[dict] = []
+    for ann_id, ann in enumerate(annotations, start=1):
+        cls_id = ann.class_id
+        if cls_id < 0 or cls_id >= class_mapping.nc:
+            raise IndexError(f"ann.class_id out of range: {cls_id}")
+
+        bbox = ann.bbox_px
+        crowded = str(ann.get_attribute("crowded", "false")).lower() == "true"
+        coco_annotations.append(
+            {
+                "id": ann_id,
+                "image_id": image_id,
+                "category_id": cls_id,
+                "bbox": [
+                    float(bbox.x1),
+                    float(bbox.y1),
+                    float(bbox.width_px),
+                    float(bbox.height_px),
+                ],
+                "area": float(bbox.width_px * bbox.height_px),
+                "iscrowd": int(crowded),
+            }
+        )
+    payload["annotations"] = coco_annotations
+    return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+
+
+def export_pascal_voc_xml(
+    annotations: Sequence[HBBAnnotation],
+    *,
+    class_mapping: ClassMapping,
+    image_w: int,
+    image_h: int,
+    image_path: str | Path | None = None,
+) -> str:
+    """
+    Export one image's HBB annotations as a Pascal VOC XML document.
+    """
+    class_mapping.validate()
+    if image_w <= 0 or image_h <= 0:
+        raise ValueError("image_w/image_h must be positive")
+
+    image_path_obj = Path(image_path) if image_path else None
+    root = ET.Element("annotation")
+    ET.SubElement(root, "folder").text = image_path_obj.parent.name if image_path_obj else ""
+    ET.SubElement(root, "filename").text = image_path_obj.name if image_path_obj else ""
+    ET.SubElement(root, "path").text = str(image_path_obj) if image_path_obj else ""
+
+    source = ET.SubElement(root, "source")
+    ET.SubElement(source, "database").text = "Unknown"
+
+    size = ET.SubElement(root, "size")
+    ET.SubElement(size, "width").text = str(int(image_w))
+    ET.SubElement(size, "height").text = str(int(image_h))
+    ET.SubElement(size, "depth").text = "3"
+    ET.SubElement(root, "segmented").text = "0"
+
+    for ann in annotations:
+        cls_id = ann.class_id
+        if cls_id < 0 or cls_id >= class_mapping.nc:
+            raise IndexError(f"ann.class_id out of range: {cls_id}")
+
+        obj = ET.SubElement(root, "object")
+        ET.SubElement(obj, "name").text = class_mapping.id_to_name(cls_id)
+        ET.SubElement(obj, "pose").text = "Unspecified"
+        ET.SubElement(obj, "truncated").text = (
+            "1" if str(ann.get_attribute("truncated", "false")).lower() == "true" else "0"
+        )
+        ET.SubElement(obj, "difficult").text = (
+            "1" if str(ann.get_attribute("hard_sample", "false")).lower() == "true" else "0"
+        )
+
+        bbox = ET.SubElement(obj, "bndbox")
+        ET.SubElement(bbox, "xmin").text = str(int(round(ann.bbox_px.x1)))
+        ET.SubElement(bbox, "ymin").text = str(int(round(ann.bbox_px.y1)))
+        ET.SubElement(bbox, "xmax").text = str(int(round(ann.bbox_px.x2)))
+        ET.SubElement(bbox, "ymax").text = str(int(round(ann.bbox_px.y2)))
+
+    tree = ET.ElementTree(root)
+    ET.indent(tree, space="  ")
+    return ET.tostring(root, encoding="unicode") + "\n"

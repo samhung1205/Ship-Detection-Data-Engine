@@ -13,9 +13,14 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 
 from .canvas_utils import (
+    compute_magnifier_anchor,
+    draw_boundary_boxes_on_canvas,
     draw_bboxes_on_canvas,
+    draw_error_cases_overlay,
     draw_paste_images_on_canvas,
+    draw_paste_zone_overlay,
     draw_predictions_on_canvas,
+    draw_tile_grid_overview,
     draw_tile_overlay,
 )
 
@@ -33,6 +38,7 @@ class CanvasImageLabel(QtWidgets.QLabel):
         self._move_handler: MouseEventHandler = None
         self._press_handler: MouseEventHandler = None
         self._release_handler: MouseEventHandler = None
+        self._leave_handler: MouseEventHandler = None
 
     def set_move_handler(self, fn: MouseEventHandler) -> None:
         self._move_handler = fn
@@ -42,6 +48,9 @@ class CanvasImageLabel(QtWidgets.QLabel):
 
     def set_release_handler(self, fn: MouseEventHandler) -> None:
         self._release_handler = fn
+
+    def set_leave_handler(self, fn: MouseEventHandler) -> None:
+        self._leave_handler = fn
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._move_handler is not None:
@@ -60,6 +69,12 @@ class CanvasImageLabel(QtWidgets.QLabel):
             self._release_handler(event)
         else:
             super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        if self._leave_handler is not None:
+            self._leave_handler(event)
+        else:
+            super().leaveEvent(event)
 
 
 class ImageCanvasWidget(QtWidgets.QWidget):
@@ -85,6 +100,15 @@ class ImageCanvasWidget(QtWidgets.QWidget):
         self.image_label.setAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
         )
+        self._magnifier_label = QtWidgets.QLabel(self.image_label)
+        self._magnifier_label.setFixedSize(160, 160)
+        self._magnifier_label.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        self._magnifier_label.setStyleSheet(
+            "border: 2px solid #00BFFF; background: rgba(255, 255, 255, 235);"
+        )
+        self._magnifier_label.hide()
         self.scroll_area.setWidget(self.image_label)
         layout.addWidget(self.scroll_area)
 
@@ -120,9 +144,16 @@ class ImageCanvasWidget(QtWidgets.QWidget):
         bbox_data: list,
         pimg_data: list,
         paste_images: list[Any],
+        paste_zone_rect: tuple[int, int, int, int] | None = None,
         predictions: list[Any] | None = None,
         show_predictions: bool = False,
         tile_rect: tuple[int, int, int, int] | None = None,
+        tile_grid_rects: list[tuple[int, int, int, int]] | None = None,
+        tile_grid_current_index: int = -1,
+        boundary_rows: list[list] | None = None,
+        boundary_labels: list[str] | None = None,
+        error_cases: list[Any] | None = None,
+        error_gt_boxes: list[tuple[str, float, float, float, float]] | None = None,
     ) -> tuple[float, int]:
         """
         Scale origin by zoom curve, draw boxes and paste images, update label.
@@ -136,7 +167,16 @@ class ImageCanvasWidget(QtWidgets.QWidget):
         """
         ratio_rate = pow(10, (ratio_value - 50) / 50)
         qpixmap_height = int(origin_height * ratio_rate)
-        canvas = origin_canvas.scaledToHeight(qpixmap_height)
+        canvas = origin_canvas.scaledToHeight(
+            qpixmap_height,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        draw_paste_zone_overlay(
+            canvas,
+            paste_zone_rect,
+            origin_width=origin_width,
+            origin_height=origin_height,
+        )
         if not hide_boxes:
             draw_bboxes_on_canvas(canvas, bbox_data + pimg_data)
         draw_paste_images_on_canvas(canvas, paste_images)
@@ -155,6 +195,31 @@ class ImageCanvasWidget(QtWidgets.QWidget):
                 origin_width=origin_width,
                 origin_height=origin_height,
             )
+        elif tile_grid_rects:
+            draw_tile_grid_overview(
+                canvas,
+                tile_grid_rects,
+                current_index=tile_grid_current_index,
+                origin_width=origin_width,
+                origin_height=origin_height,
+            )
+        if boundary_rows:
+            draw_boundary_boxes_on_canvas(
+                canvas,
+                boundary_rows,
+                origin_width=origin_width,
+                origin_height=origin_height,
+                labels=boundary_labels,
+            )
+        if error_cases and error_gt_boxes is not None:
+            draw_error_cases_overlay(
+                canvas,
+                error_cases,
+                gt_boxes=error_gt_boxes,
+                predictions=predictions or [],
+                origin_width=origin_width,
+                origin_height=origin_height,
+            )
         self.set_canvas(canvas, refresh=True)
         return ratio_rate, qpixmap_height
 
@@ -166,3 +231,32 @@ class ImageCanvasWidget(QtWidgets.QWidget):
 
     def set_mouse_release_handler(self, fn: MouseEventHandler) -> None:
         self.image_label.set_release_handler(fn)
+
+    def set_mouse_leave_handler(self, fn: MouseEventHandler) -> None:
+        self.image_label.set_leave_handler(fn)
+
+    def show_magnifier(
+        self,
+        pixmap: QPixmap | None,
+        *,
+        cursor_x: int,
+        cursor_y: int,
+    ) -> None:
+        if pixmap is None:
+            self.hide_magnifier()
+            return
+        self._magnifier_label.setPixmap(pixmap)
+        self._magnifier_label.resize(pixmap.size())
+        x, y = compute_magnifier_anchor(
+            cursor_x=cursor_x,
+            cursor_y=cursor_y,
+            image_width=self.image_label.width(),
+            image_height=self.image_label.height(),
+            preview_size=self._magnifier_label.width(),
+        )
+        self._magnifier_label.move(x, y)
+        self._magnifier_label.show()
+        self._magnifier_label.raise_()
+
+    def hide_magnifier(self) -> None:
+        self._magnifier_label.hide()

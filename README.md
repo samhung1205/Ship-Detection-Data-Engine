@@ -47,17 +47,20 @@ python GUI.py
 
 ### 1. 開啟影像
 
-- 點擊左側 **Open Image** 按鈕，或選單 **File → Open Image** (`Ctrl+O`)
-- 支援 JPG / PNG / GIF / BMP 格式
+- 點擊左側 **Open Image** 按鈕，或選單 **File → Open Image**（Windows / Linux：`Ctrl+O`；macOS：`Cmd+O`）
+- 也可用選單 **File → Open Folder…** 載入整個資料夾，之後用 **Previous image / Next image** 逐張瀏覽
+- 支援 JPG / JPEG / PNG / GIF / BMP / TIFF 格式
 - 開圖後畫布自動顯示，可用 zoom in / zoom out 或拖曳 slider 縮放
+- 滑鼠移到主圖上時，會出現浮動 **local zoom preview**，方便檢查小船、邊界與密集區細節
 
 ### 2. Class Mapping（類別對照）
 
-- 點擊左側 **Class mapping** 按鈕，或選單 **File → Class mapping** (`Ctrl+I`)
+- 點擊左側 **Class mapping** 按鈕，或選單 **File → Class mapping**（Windows / Linux：`Ctrl+I`；macOS：`Cmd+I`）
 - 開啟對話框可新增、刪除、編輯類別（class_id / class_name / super_category）
 - 主路徑為 `ClassMappingDialog + classes.yaml`
-- 儲存後更新 `classes.yaml`，YOLO 匯入匯出的 class index 即依此對照
-- 啟動時自動從工作目錄讀取 `classes.yaml`
+- 若目前有載入 `project_config.yaml`，會優先使用該 project 指定的 `classes_yaml`
+- 儲存後更新目前 project 對應的 `classes.yaml`，YOLO 匯入匯出的 class index 即依此對照
+- 啟動時自動從工作目錄讀取 `project_config.yaml`；若有設定 `classes_yaml`，就從該路徑載入 class catalog
 - `input_window.py` 與 `data.yaml` 僅保留 legacy compatibility，不再是主流程
 
 ### 3. 標註 HBB（水平外接矩形框）
@@ -79,35 +82,73 @@ python GUI.py
 |---|---|---|
 | size_tag | small / medium / large | 依 COCO 面積閾值自動計算，可手動改 |
 | crowded | false / true | 是否在擁擠場景 |
+| hard_sample | false / true | 是否作為 hard example / hard sample |
+| occluded | false / true | 是否有遮擋 |
+| truncated | false / true | 是否被截斷 |
+| blurred | false / true | 是否模糊 |
 | difficulty_tag | normal / hard / uncertain | 標註難度 |
+| difficult_background | false / true | 是否屬於背景複雜的難例 |
+| low_contrast | false / true | 是否屬於低對比難例 |
 | scene_tag | near_shore / offshore / unknown | 場景類型 |
 
 選擇列表中的框後，右側面板會載入該框的屬性，修改後即時同步。
+其中 `hard_sample / occluded / truncated / blurred / difficult_background / low_contrast` 以 checkbox 呈現，方便快速做研究屬性與難例標記。
 
 ### 5. 載入 / 儲存 Label
 
-- **Load Label**：選單或左側按鈕，讀取 YOLO HBB 格式 txt（`class_id xc yc w h`，歸一化座標）
+- **Load Label**：選單或左側按鈕，支援：
+  - YOLO HBB 格式 txt（`class_id xc yc w h`，歸一化座標）
+  - COCO bbox JSON（會依目前開啟影像的檔名選出對應 image/annotations）
+  - annotation metadata JSON（支援本專案匯出的 research metadata records，會還原 bbox 與屬性）
+  - 預設會從 `project_config.yaml` 的 `label_root` 開始選檔
+  - 載入前可選擇 **Append GT** 或 **Replace GT**
+    - `Append GT`：把載入結果追加到目前 GT 標註
+    - `Replace GT`：用載入結果覆蓋目前 GT 標註（paste annotations 不受影響）
 - **Save Label**：彈出對話框，選擇格式：
   - **YOLO(v5~10)**：歸一化中心座標 `class_id xc yc w h`
   - **Bounding Boxes**：絕對座標 `class_id x1 y1 x2 y2`
+  - **COCO JSON**：單張影像的 `images / annotations / categories` 結構，bbox 為 `[x, y, w, h]`
+  - **Pascal VOC XML**：單張影像的 `annotation/object/bndbox` XML
+- `Save Label` 會把目前影像中的 **GT + committed paste annotations** 一起輸出
+- `Save Label` 對話框的預設格式會跟 `project_config.yaml` 的 `default_export_format` 一致
+- 若目前影像位於 `image_root` 之下，預設輸出路徑會映射到 `label_root` 對應位置，例如 `images/train/a.jpg -> labels/train/a.txt`
 - **Show Label**：在新視窗中預覽當前標註疊圖
 
 ### 6. Prediction Overlay（模型預測疊圖）
 
 - **Load preds**（左側按鈕）或選單 **File → Load predictions…**
 - 讀取 YOLO 格式 txt，支援第 6 欄 confidence：`class_id xc yc w h [conf]`
+- 也可用選單 **File → Load prediction folder…** 指定一個 prediction sidecar 資料夾；之後在資料夾瀏覽模式下切換影像時，會自動讀取同 basename 的 `.txt` prediction 檔
+- 選單 **File → Next review image** 可直接跳到下一張有 prediction sidecar 的影像
+- 也可用選單 **File → Load YOLO model…** 載入模型，再用左側 **Run model** 按鈕或 **File → Run model prediction** 直接對當前影像推論
+- 模型直推論目前為 optional 功能，需要額外安裝 `ultralytics` 與 `torch`
 - 預測框以**橘色虛線**顯示在畫布上（與 GT 綠色實線區分）
 - 勾選 **Show preds** 控制是否顯示
+- 右上方 **Pred conf >=** slider 可調整顯示門檻（`0.00` ~ `1.00`），同步影響 prediction list、畫布 overlay 與 error analysis 使用的 prediction 集合
+- 選取左側 prediction list 中的一筆後，可在畫布上直接拖曳移動或拖四角調整大小；被修改過的 prediction 會在列表中標示為 **`[edited]`**
+- prediction list 右鍵可 **Change class…**，先修正類別再決定是否接受
 - 左側預測列表中選取一筆後：
   - **Accept**：轉為正式 GT 標註（綠色框），從預測列表移除
   - **Reject**：刪除該筆預測
+- 選單 **File → Accept all visible predictions** / **Reject all visible predictions** 可對目前 conf threshold 下可見的 prediction 批次處理
 - 選單 **File → Clear predictions** 清空所有預測
 
 ### 7. Error Analysis（誤差分析）
 
 - 選單 **Analysis → Run error analysis…**
+- 可選 scope：
+  - **Current image**：分析目前開啟影像的 GT 與目前載入的 predictions
+  - **Current folder**：掃描目前影像所在資料夾內的所有支援影像，並要求指定一個 **prediction folder**，以同 basename 的 `.txt` prediction sidecar 做配對
+- 選單 **Analysis → Show GT/Pred IoU overlay** 可把 IoU 配對結果直接疊在主畫布上：
+  - 已配對 GT / prediction 之間會畫出連線並標示 `TP / WrongClass / Localization / Duplicate` 與 IoU
+  - 未配對 prediction 會在框旁標示 `FP`
+  - 未配對 GT 會在框旁標示 `FN`
 - 自動以 greedy IoU matching 比對當前 GT 與 predictions
 - 顯示表格：Type / IoU / GT class / Pred class / Confidence
+- 可用 **Type** 下拉選單快速篩選 `TP / FP / FN / WrongClass / Localization / Duplicate`
+- 可勾選 **Bookmarked only** 只瀏覽已收藏案例
+- 若 GT 有屬性標註，還可依 **Size / Scene / Difficulty / Crowded / Hard sample / Occluded / Truncated / Blurred** 篩選錯誤案例，方便分析 small ship、near_shore、hard sample、遮擋或模糊樣本等研究情境
+- 表格也會直接顯示這些 GT 屬性欄位，方便快速比對 error case 與資料特性
 - 分類規則：
 
 | 類型 | 條件 |
@@ -121,16 +162,28 @@ python GUI.py
 
 - 可勾選 **Bookmark**、填寫 **Notes**
 - **Export CSV…** 匯出所有錯誤案例
+- committed paste annotations 也會納入目前影像的 GT 集合一起分析，避免與實際匯出的 label 不一致
+- `Current folder` 也會顯示 **Image** 欄位，方便在多張圖之間追 case
+- `Current folder` 會優先使用目前 GUI 內已開啟影像的 live GT / paste / prediction 狀態，不必先手動另存才能分析這張圖
 
 ### 8. Dataset Statistics（統計分析）
 
 - 選單 **Analysis → Dataset statistics…**
-- 四個分頁：
+- 可選 scope：
+  - **Current image**：分析目前開啟影像的 **GT + committed paste annotations**
+  - **Current folder**：掃描目前影像所在資料夾內的所有支援影像，按 basename 尋找對應 label sidecar
+- 多個分頁：
+  - **Overview**：總影像數、總標註數、平均每張圖標註數、類別數
   - **Class dist**：各類別標註數量
   - **Size dist**：small / medium / large 分布
+  - **Scene dist**：near_shore / offshore / unknown 的數量與比例
   - **Bbox stats**：寬 / 高 / 面積 / 長寬比的 min / max / mean / std
+    - 若 metadata 中有 `rotation_deg` / `angle_deg`，也會一併統計旋轉角度分布
   - **Class × Size**：類別 × 尺度交叉表
 - **Export JSON…** / **Export CSV…** 匯出統計結果
+- Overview 也會顯示 **Labeled images / Unlabeled images**
+- `Current folder` 目前優先讀取與影像同 basename 的 `.json` / `.txt` label sidecar；若 `project_config.yaml` 中有設定 `image_root / label_root`，也會嘗試依相對路徑對應到 label 目錄
+- 若目前開啟影像有尚未另存的新標註，`Current folder` 會以當前 GUI 內的 live annotations 覆蓋該張圖的磁碟 label，避免統計結果落後於你正在修的內容
 
 ### 9. Tile / Sliding Window（分格檢視）
 
@@ -138,27 +191,38 @@ python GUI.py
 - 設定 **Size**（tile 邊長，預設 640）和 **Stride**（步幅，預設 480）
 - 勾選 **Enable** 啟用分格視圖：
   - 畫布上顯示綠色 tile 邊框，tile 外區域暗化
-  - `<` `>` 按鈕切換 tile，index 標籤顯示 `3 / 16`
+  - 方向箭頭可切換上下左右鄰近 tile，index 標籤顯示 `3 / 16`
+  - 也可用 `Alt + Arrow` 快速切換目前 tile 的上下左右鄰居
+  - 勾選 **Overview** 可回到全圖查看 tile 分布，並高亮目前 tile；在 overview 上直接點選某個 tile 可跳入該 tile
+  - Tile 面板會提示 **Boundary** 數量；若顯示 `Boundary: 2`，代表目前 tile 內有 2 個 GT 框跨越 tile 邊界，需留意重複標註或截斷漏標
 - tile 只是視角，所有標註始終寫回全圖座標，切換 tile 不會造成框漂移
 
 ### 10. Copy-Paste（圖像貼上）
 
 - 點擊 **Paste Image** 按鈕進入貼圖模式
 - 右下方 **Choose Image** 選擇 PNG asset（含 alpha 透明通道）
-- 用 4 個 slider 調整：Resize / Rotation / Brightness / Contrast
-- 勾選 **HorizontalFlip** 水平翻轉
+- 可在 **Mode** 切換 `Manual / Smart zone`；`Smart zone` 會要求先用 **Set zone** 在畫布上框出可貼圖區域，只有完整落在該區域內的 paste 才能 **Add**
+- **Target** 可選 `small / medium / large`，右側會顯示目前 zoom/export 比例下的建議縮放範圍與目前 paste 尺度
+- 用 7 個 slider 調整：Resize / Rotation / Brightness / Contrast / Blur / Opacity / Feather
+- **Effects (n)** 可開啟進階效果對話框，額外設定 `Shadow` 與 `Motion Blur`，避免主畫面右下角再堆更多 slider
+- 勾選 **HorizontalFlip** / **VerticalFlip** 控制翻轉
 - 在畫布上點擊放置，自動偵測 alpha 邊界產生 bbox
-- 每次貼圖自動記錄 `PasteRecord`（含 asset 路徑、transform 參數、bbox、timestamp）
+- 若最終 alpha 幾乎為空（例如 opacity 太低），預覽仍會更新，但 **Add** 會保持 disabled，避免提交空貼圖
+- 每次貼圖自動記錄 `PasteRecord`（含 asset 路徑、flip / blur / opacity / feather 等 transform 參數、bbox、timestamp）
 - 選單 **File → Export paste metadata (JSON/CSV)** 匯出完整操作紀錄
+- 一旦 **Add** 成功，該 paste annotation 會視為正式可匯出標註，並納入 metadata export / statistics / error analysis
+- **Save Image** 會以原圖解析度重建合成結果，不會直接把當前 GUI 縮放畫面存出去；若想避免 JPEG 再壓縮，建議存成 PNG / BMP
 
 ### 11. Metadata Export（屬性匯出）
 
 - 選單 **File → Export annotation metadata (JSON)…** / **(CSV)…**
-- 匯出每筆標註的完整欄位：image_path / class_id / class_name / super_category / x1 / y1 / x2 / y2 / size_tag / crowded / difficulty_tag / scene_tag
+- 匯出每筆標註的完整欄位：image_path / class_id / class_name / super_category / x1 / y1 / x2 / y2 / size_tag / crowded / hard_sample / occluded / truncated / blurred / difficulty_tag / difficult_background / low_contrast / scene_tag / annotation_source
+- `annotation_source` 會標記來源為 `gt` 或 `paste`
+- metadata export 目前會把 **GT + committed paste annotations** 一起匯出
 
 ### 12. Undo / Redo
 
-- 選單 **Edit → Undo** (`Ctrl+Z`) / **Redo** (`Ctrl+Shift+Z`)
+- 選單 **Edit → Undo**（Windows / Linux：`Ctrl+Z`；macOS：`Cmd+Z`） / **Redo**（Windows / Linux：`Ctrl+Shift+Z` 或 `Ctrl+Y`；macOS：`Cmd+Shift+Z`）
 - 最多保留 50 步操作紀錄
 - 支援：新增框、刪除框、清除全部、重新命名、批次載入 label
 
@@ -191,16 +255,29 @@ tile_stride: 480
 
 - 啟動時自動讀取工作目錄下的 `project_config.yaml`（如果存在）
 - 開圖時自動加入 `recent_images`
+- `project_config.yaml` 現在會實際控制：
+  - `classes_yaml`：啟動時 class catalog 的載入位置，以及 class mapping dialog 的預設讀寫位置
+  - `image_root`：**Open Image** / **Open Folder** 的預設起始目錄
+  - `label_root`：**Load Label** 的預設起始目錄，以及 **Save Label** 的預設輸出根目錄
+  - `default_export_format`：**Save Label** 對話框的預設格式
+  - `autosave_seconds` / `tile_size` / `tile_stride`
+- `project_root` 與其他相對路徑會以 `project_config.yaml` 所在位置解析，因此每個研究專案都可以攜帶自己的一套 classes / images / labels / export defaults
 
 ### 快捷鍵總覽
 
 | 快捷鍵 | 功能 |
 |---|---|
-| `Ctrl+O` | Open Image |
-| `Ctrl+I` | Class mapping |
-| `Ctrl+L` | Load Label |
-| `Ctrl+Z` | Undo |
-| `Ctrl+Shift+Z` | Redo |
+| `W` | Create RectBox |
+| `D` | Delete selected box |
+| `S` | Save Label |
+| `H` | Hide / Show boxes |
+| `Ctrl+O` / `Cmd+O` | Open Image |
+| `Ctrl+I` / `Cmd+I` | Class mapping |
+| `Ctrl+L` / `Cmd+L` | Load Label |
+| `Ctrl+Z` / `Cmd+Z` | Undo |
+| `Ctrl+Shift+Z` / `Ctrl+Y` / `Cmd+Shift+Z` | Redo |
+| `Alt+Arrow` | Tile 上下左右導航 |
+| `Alt+G` | Toggle tile overview |
 
 ---
 
@@ -234,7 +311,7 @@ GUI/
 │   ├── paste_candidate_controller.py # Paste asset load / transform / placement controller
 │   ├── paste_actions_controller.py #   Paste add / rename / delete / clear action entry controller
 │   ├── paste_preview_controller.py #   Paste row highlight preview controller
-│   ├── attribute_panel.py          #   右側屬性編輯面板（size_tag / crowded / difficulty / scene）
+│   ├── attribute_panel.py          #   右側屬性編輯面板（size / crowded / difficulty / hard-case flags / scene）
 │   ├── class_mapping_service.py    #   classes.yaml 讀寫 + ClassCatalog 管理
 │   ├── tile_panel.py               #   左下方 Tile view 面板（Size/Stride/Enable/Nav）
 │   ├── constants.py                #   共用 UI 樣式常數
@@ -259,10 +336,14 @@ GUI/
 │   ├── import_export.py            #   YOLO HBB parse / export、bbox txt export
 │   ├── legacy_rows.py              #   legacy GUI row 格式 <-> HBBAnnotation 轉接
 │   ├── metadata_export.py          #   per-image annotation metadata → JSON / CSV
+│   ├── dataset_scan.py             #   folder / dataset label 掃描與 records 聚合
 │   ├── attributes.py               #   研究屬性欄位定義、size_tag 計算（COCO 閾值）
 │   ├── prediction.py               #   PredictionRecord、YOLO prediction 解析（含 confidence）
+│   ├── prediction_scan.py          #   prediction sidecar path / folder review helper
+│   ├── model_inference.py          #   optional YOLO model 載入 / 單張影像推論 helper
 │   ├── error_analysis.py           #   IoU 計算、GT-vs-pred greedy matching、ErrorCase、CSV 匯出
 │   ├── statistics.py               #   dataset 統計分析（class / size / bbox distributions）、JSON/CSV
+│   ├── error_analysis_scan.py      #   folder-level GT/pred 掃描與 ErrorCase 聚合
 │   ├── tile.py                     #   TileConfig / TileRect / compute_tile_grid / 座標轉換
 │   ├── augmentation.py             #   PasteRecord（copy-paste transform 紀錄）、JSON/CSV 匯出
 │   ├── paste_candidate.py          #   in-progress paste candidate session（暫存 transform / placement state）
@@ -291,8 +372,11 @@ GUI/
     ├── test_document.py            #   GT document API / 對齊保護測試
     ├── test_attributes.py          #   size_tag 計算、default_attributes 測試
     ├── test_metadata_export.py     #   build_annotation_records + JSON/CSV 匯出
+    ├── test_dataset_scan.py        #   folder label 掃描、image_root→label_root 對應
     ├── test_prediction.py          #   YOLO prediction 解析（含/不含 confidence）
+    ├── test_prediction_scan.py     #   prediction sidecar path / folder review helper
     ├── test_error_analysis.py      #   IoU / matching / error_type / CSV 匯出
+    ├── test_error_analysis_scan.py #   folder-level GT/pred 掃描與 current-image override
     ├── test_statistics.py          #   dataset stats 計算 + JSON/CSV 匯出
     ├── test_tile.py                #   tile grid 計算 / 座標轉換 / annotations_in_tile
     ├── test_augmentation.py        #   PasteRecord / JSON/CSV 匯出
@@ -309,7 +393,7 @@ pip install pytest
 pytest -q
 ```
 
-目前共 128 個測試，涵蓋所有 `sdde/` 模組的核心邏輯、legacy `data.yaml` 相容解析、GUI 與 service layer 之間的 row adapter、annotation controller 的狀態對齊保護、GT / paste document API、paste candidate session，以及 GT 與 paste 的 action / draw / list / preview / workspace / candidate controllers，其中也包含 paste payload 在含有 Qt `QImage` 物件時的提交回歸保護。
+目前共 230 個測試，涵蓋所有 `sdde/` 模組的核心邏輯、legacy `data.yaml` 相容解析、GUI 與 service layer 之間的 row adapter、annotation controller 的狀態對齊保護、GT / paste document API、paste candidate session，以及 GT 與 paste 的 action / draw / list / preview / workspace / candidate controllers，其中也包含 paste payload 在含有 Qt `QImage` 物件時的提交回歸保護、`Load Label` 的 append/replace 路徑、GT + paste 的聚合 export / analysis 行為、`Current folder` statistics 的 label 掃描與 project-style 路徑對應、`Current folder` error analysis 的 GT/pred 掃描與 current-image override、`project_config` 對 classes/image/label/export default 的路徑接線，以及 folder-level prediction review / batch accept-reject 的 sidecar workflow。
 如果準備進行重構，請再搭配 [`docs/manual_smoke_test.md`](docs/manual_smoke_test.md) 的手動 smoke test 清單一起回歸。
 
 ---
@@ -358,7 +442,7 @@ classes:
 1 0.7800 0.6500 0.1200 0.0900 0.62
 ```
 
-第 6 欄為信心分數（可省略，預設 1.0）
+第 6 欄為信心分數（可略，預設 1.0）
 
 ### project_config.yaml
 

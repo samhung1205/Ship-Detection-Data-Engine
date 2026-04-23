@@ -19,9 +19,16 @@ if TYPE_CHECKING:
 
 
 class ClassMappingDialog(QtWidgets.QDialog):
-    def __init__(self, main_widget: "MyWidget", parent=None):
+    def __init__(
+        self,
+        main_widget: "MyWidget",
+        parent=None,
+        *,
+        default_yaml_path: str | Path | None = None,
+    ):
         super().__init__(parent)
         self.main_widget = main_widget
+        self._default_yaml_path = Path(default_yaml_path) if default_yaml_path is not None else default_classes_yaml_path()
         self.setWindowTitle("Class mapping (SDDE)")
         self.resize(520, 360)
         self._orig_sig = main_widget.class_catalog.signature()
@@ -120,7 +127,10 @@ class ClassMappingDialog(QtWidgets.QDialog):
 
     def _load_yaml(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Load classes.yaml", str(Path.home()), "YAML (*.yaml *.yml)"
+            self,
+            "Load classes.yaml",
+            str(self._default_yaml_path.parent),
+            "YAML (*.yaml *.yml)",
         )
         if path:
             try:
@@ -139,7 +149,10 @@ class ClassMappingDialog(QtWidgets.QDialog):
             QMessageBox.warning(self, "Invalid mapping", str(e))
             return
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Save classes.yaml", str(default_classes_yaml_path()), "YAML (*.yaml)"
+            self,
+            "Save classes.yaml",
+            str(self._default_yaml_path),
+            "YAML (*.yaml)",
         )
         if path:
             try:
@@ -169,7 +182,7 @@ class ClassMappingDialog(QtWidgets.QDialog):
 
         self.main_widget.apply_class_catalog(new_cat)
         try:
-            save_classes_yaml_path(new_cat, default_classes_yaml_path())
+            save_classes_yaml_path(new_cat, self._default_yaml_path)
         except OSError:
             pass
         self.accept()

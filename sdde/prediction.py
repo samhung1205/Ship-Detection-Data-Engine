@@ -87,3 +87,68 @@ def parse_predictions_yolo_txt(
             )
         )
     return out
+
+
+def filter_predictions_by_confidence(
+    predictions: Sequence[PredictionRecord],
+    *,
+    min_confidence: float,
+) -> List[PredictionRecord]:
+    """
+    Return predictions whose confidence is >= the requested threshold.
+
+    The threshold is clamped to [0, 1] so slider-driven UI values and tests can
+    share the same helper without duplicating range handling.
+    """
+    threshold = min(1.0, max(0.0, float(min_confidence)))
+    return [p for p in predictions if float(p.confidence) >= threshold]
+
+
+def rename_prediction_class(
+    predictions: Sequence[PredictionRecord],
+    index: int,
+    *,
+    new_class_name: str,
+    object_list: Sequence[str],
+) -> bool:
+    if index < 0 or index >= len(predictions):
+        return False
+    if new_class_name not in object_list:
+        return False
+    pred = predictions[index]
+    pred.class_name = str(new_class_name)
+    pred.class_id = list(object_list).index(new_class_name)
+    pred.pred_status = STATUS_EDITED
+    return True
+
+
+def update_prediction_geometry_from_canvas_rect(
+    predictions: Sequence[PredictionRecord],
+    index: int,
+    *,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    canvas_width: int,
+    canvas_height: int,
+    origin_width: int,
+    origin_height: int,
+) -> bool:
+    if index < 0 or index >= len(predictions):
+        return False
+    if canvas_width <= 0 or canvas_height <= 0 or origin_width <= 0 or origin_height <= 0:
+        return False
+
+    left = min(int(x1), int(x2))
+    top = min(int(y1), int(y2))
+    right = max(int(x1), int(x2))
+    bottom = max(int(y1), int(y2))
+
+    pred = predictions[index]
+    pred.x1 = float(left) * origin_width / canvas_width
+    pred.y1 = float(top) * origin_height / canvas_height
+    pred.x2 = float(right) * origin_width / canvas_width
+    pred.y2 = float(bottom) * origin_height / canvas_height
+    pred.pred_status = STATUS_EDITED
+    return True

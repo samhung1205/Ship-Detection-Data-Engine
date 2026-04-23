@@ -1,9 +1,20 @@
 """Tests for ProjectConfig load / save / recent_images."""
 
 import pytest
+import sys
 from pathlib import Path
 
-from sdde.project_config import ProjectConfig, load_project_config, save_project_config
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from sdde.project_config import (
+    ProjectConfig,
+    load_project_config,
+    resolve_project_path,
+    resolve_project_root,
+    save_project_config,
+)
 
 
 def test_defaults() -> None:
@@ -53,3 +64,23 @@ def test_round_trip(tmp_path: Path) -> None:
 def test_load_missing_file(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         load_project_config(tmp_path / "nonexistent.yaml")
+
+
+def test_resolve_project_root_uses_config_file_parent_for_relative_root(tmp_path: Path) -> None:
+    cfg = ProjectConfig(project_root=".")
+    config_path = tmp_path / "proj" / "project_config.yaml"
+    config_path.parent.mkdir(parents=True)
+
+    resolved = resolve_project_root(cfg, config_path=config_path)
+
+    assert resolved == config_path.parent.resolve()
+
+
+def test_resolve_project_path_uses_project_root_relative_to_config_file(tmp_path: Path) -> None:
+    cfg = ProjectConfig(project_root="workspace")
+    config_path = tmp_path / "settings" / "project_config.yaml"
+    config_path.parent.mkdir(parents=True)
+
+    resolved = resolve_project_path(cfg, "labels/train", config_path=config_path)
+
+    assert resolved == (config_path.parent / "workspace" / "labels" / "train").resolve()

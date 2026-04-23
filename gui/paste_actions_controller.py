@@ -24,6 +24,7 @@ def _default_ask_label(parent: Any, names: Sequence[str]) -> tuple[str, bool]:
         "Enter object name",
         list(names),
         0,
+        False,
     )
 
 

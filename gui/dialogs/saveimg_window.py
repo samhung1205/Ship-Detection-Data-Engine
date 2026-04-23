@@ -86,26 +86,29 @@ class SaveimgWindow(QtWidgets.QWidget):
     def saveImage(self):
         m = self.main_widget
         default_name = m.imgfilePath.split('/')[-1][:-4] if m.imgfilePath else 'image'
+        export_pixmap = m.build_export_image_pixmap()
+        if export_pixmap is None:
+            return
         if self.format == 'JPG':
             filePath, filterType = QtWidgets.QFileDialog.getSaveFileName(
                 self, directory=default_name + '.jpg', filter='JPG(*.jpg)'
             )
             if filePath:
-                m.pmap.pixmap().save(filePath, quality=self.val)
+                export_pixmap.save(filePath, quality=self.val)
                 self.close()
         elif self.format == 'PNG':
             filePath, filterType = QtWidgets.QFileDialog.getSaveFileName(
                 self, directory=default_name + '.png', filter='PNG(*.png)'
             )
             if filePath:
-                m.pmap.pixmap().save(filePath, 'png')
+                export_pixmap.save(filePath, 'png')
                 self.close()
         elif self.format == 'BMP':
             filePath, filterType = QtWidgets.QFileDialog.getSaveFileName(
                 self, directory=default_name + '.bmp', filter='BMP(*.bmp)'
             )
             if filePath:
-                m.pmap.pixmap().save(filePath, 'bmp')
+                export_pixmap.save(filePath, 'bmp')
                 self.close()
 
     def closeWindow(self):

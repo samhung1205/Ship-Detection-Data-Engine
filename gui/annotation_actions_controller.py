@@ -21,6 +21,7 @@ def _default_ask_label(parent: Any, names: Sequence[str]) -> tuple[str, bool]:
         "Enter object name",
         list(names),
         0,
+        False,
     )
 
 
@@ -155,6 +156,9 @@ class AnnotationActionsController:
 
     def append_blocks(self, blocks: list[tuple[list, list, str]]) -> None:
         self._command_controller.append_blocks(blocks)
+
+    def replace_with_blocks(self, blocks: list[tuple[list, list, str]]) -> None:
+        self._command_controller.replace_all_boxes(blocks)
 
     def remove_row(self, row: int) -> None:
         self._command_controller.remove_box(row)
