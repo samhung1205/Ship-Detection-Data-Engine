@@ -23,6 +23,7 @@ class StatisticsDialog(QtWidgets.QDialog):
         *,
         records: list[dict[str, Any]],
         scope_label: str = "Current image",
+        detail_label: str = "",
         total_images_override: int | None = None,
         labeled_images_override: int | None = None,
     ) -> None:
@@ -30,6 +31,7 @@ class StatisticsDialog(QtWidgets.QDialog):
         self.setWindowTitle("Dataset Statistics")
         self.resize(620, 520)
         self._scope_label = scope_label
+        self._detail_label = detail_label
         self._stats = compute_dataset_stats(
             records,
             total_images_override=total_images_override,
@@ -48,6 +50,10 @@ class StatisticsDialog(QtWidgets.QDialog):
         scope_lbl = QtWidgets.QLabel(f"Scope: {self._scope_label}")
         scope_lbl.setStyleSheet("color: #666; margin-bottom: 2px;")
         layout.addWidget(scope_lbl)
+        if self._detail_label:
+            detail = QtWidgets.QLabel(self._detail_label)
+            detail.setStyleSheet("color: #666; margin-bottom: 4px;")
+            layout.addWidget(detail)
         header = (
             f"Images: {s['total_images']}  |  "
             f"Labeled: {s.get('labeled_images', 0)}  |  "

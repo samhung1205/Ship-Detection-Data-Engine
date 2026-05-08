@@ -53,6 +53,7 @@ class ErrorCase:
     gt_class: str = ""
     pred_class: str = ""
     confidence: float = 0.0
+    pred_box: tuple[float, float, float, float] | None = None
     gt_attrs: Mapping[str, str] | None = None
     notes: str = ""
     bookmarked: bool = False
@@ -127,6 +128,7 @@ def match_gt_pred(
                 gt_class=gt_boxes[gi][0],
                 pred_class=predictions[pi].class_name,
                 confidence=predictions[pi].confidence,
+                pred_box=_prediction_box(predictions[pi]),
                 gt_attrs=_normalized_gt_attrs(gi, gt_attributes),
             ))
             pred_matched[pi] = gi
@@ -154,6 +156,7 @@ def match_gt_pred(
             gt_class=gt_cls,
             pred_class=pred_cls,
             confidence=predictions[pi].confidence,
+            pred_box=_prediction_box(predictions[pi]),
             gt_attrs=_normalized_gt_attrs(gi, gt_attributes),
         ))
         gt_matched[gi] = pi
@@ -168,6 +171,7 @@ def match_gt_pred(
                 iou=0.0,
                 pred_class=predictions[pi].class_name,
                 confidence=predictions[pi].confidence,
+                pred_box=_prediction_box(predictions[pi]),
             ))
 
     for gi in range(n_gt):
@@ -274,6 +278,15 @@ def _normalized_gt_attrs(
     from .attributes import normalize_attributes
 
     return normalize_attributes(gt_attributes[gt_index])
+
+
+def _prediction_box(prediction: PredictionRecord) -> tuple[float, float, float, float]:
+    return (
+        float(prediction.x1),
+        float(prediction.y1),
+        float(prediction.x2),
+        float(prediction.y2),
+    )
 
 
 _CSV_FIELDS = [

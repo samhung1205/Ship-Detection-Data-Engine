@@ -1,0 +1,18 @@
+{
+  "image_folder": "/private/var/folders/35/by3hk_ms52ngv4m417l9ny6m0000gp/T/pytest-of-SAM/pytest-64/test_accept_all_visible_predic0",
+  "prediction_folder": "/private/var/folders/35/by3hk_ms52ngv4m417l9ny6m0000gp/T/pytest-of-SAM/pytest-64/test_accept_all_visible_predic0/preds",
+  "states": {
+    "/private/var/folders/35/by3hk_ms52ngv4m417l9ny6m0000gp/T/pytest-of-SAM/pytest-64/test_accept_all_visible_predic0/a.jpg": {
+      "original_count": 1,
+      "accepted_count": 1,
+      "rejected_count": 0,
+      "remaining_predictions": []
+    },
+    "/private/var/folders/35/by3hk_ms52ngv4m417l9ny6m0000gp/T/pytest-of-SAM/pytest-64/test_accept_all_visible_predic0/b.jpg": {
+      "original_count": 1,
+      "accepted_count": 0,
+      "rejected_count": 1,
+      "remaining_predictions": []
+    }
+  }
+}

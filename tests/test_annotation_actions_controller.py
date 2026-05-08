@@ -101,7 +101,7 @@ def test_actions_controller_prompts_and_adds_box_from_rect() -> None:
             ["merchant", 20, 10, 100, 50, 200, 100],
             ["merchant", 100, 50, 500, 250],
             "merchant",
-            True,
+            False,
         )
     ]
     assert list_view.current_row == 0

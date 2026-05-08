@@ -2,7 +2,7 @@
 
 面向遙測 / 衛星 / 航空影像之船舶偵測研究的 **PyQt6 資料工程 GUI 工作台**。
 
-支援多類別 HBB 標註、YOLO 格式匯入匯出、prediction overlay、error analysis、tile sliding-window 視圖、copy-paste augmentation、屬性標註、統計分析，以及 autosave 和 project config 持久化。
+支援多類別 HBB 標註、YOLO 格式匯入匯出、prediction overlay、error analysis、dataset QC、tile sliding-window 視圖、copy-paste augmentation、屬性標註、統計分析，以及 autosave 和 project config 持久化。
 
 ---
 
@@ -60,6 +60,7 @@ python GUI.py
 - 主路徑為 `ClassMappingDialog + classes.yaml`
 - 若目前有載入 `project_config.yaml`，會優先使用該 project 指定的 `classes_yaml`
 - 儲存後更新目前 project 對應的 `classes.yaml`，YOLO 匯入匯出的 class index 即依此對照
+- 標註 rename、paste rename、prediction accept/rewrite 都以目前 `classes.yaml` 為準；若要新增新類別，需先到 **Class mapping** 更新 catalog
 - 啟動時自動從工作目錄讀取 `project_config.yaml`；若有設定 `classes_yaml`，就從該路徑載入 class catalog
 - `input_window.py` 與 `data.yaml` 僅保留 legacy compatibility，不再是主流程
 
@@ -118,8 +119,18 @@ python GUI.py
 
 - **Load preds**（左側按鈕）或選單 **File → Load predictions…**
 - 讀取 YOLO 格式 txt，支援第 6 欄 confidence：`class_id xc yc w h [conf]`
+- 若目前影像位於 `images/` 資料夾，prediction 檔案選擇器會優先從相鄰的 `predictions/` 資料夾開啟，例如 `dataset/test/images` → `dataset/test/predictions`
 - 也可用選單 **File → Load prediction folder…** 指定一個 prediction sidecar 資料夾；之後在資料夾瀏覽模式下切換影像時，會自動讀取同 basename 的 `.txt` prediction 檔
-- 選單 **File → Next review image** 可直接跳到下一張有 prediction sidecar 的影像
+- 會建立 session 內的 review queue 狀態：`pending / partial / reviewed`
+- 下方狀態列會顯示目前 queue 摘要，例如 pending 數量與當前影像的 accepted / rejected / remaining
+- 選單 **File → Next review image** 可直接跳到下一張**尚未 reviewed**且有 prediction sidecar 的影像
+- review queue 會以「目前 image folder + prediction folder」為 key 持久化到 sidecar state；重新載入同一組資料夾時，可選擇 **Resume review** 或 **Start fresh**
+- 選單 **File → Clear saved review state…** 可清除目前這組 image folder + prediction folder 的已存 review 狀態，並立刻用 sidecar predictions 重建一輪新的 queue
+- 選單 **Analysis → Prediction review summary…** 可對 **Current folder** 或 **Current project** 產生 review 報表
+  - 若目前已載入 prediction folder，會直接使用該路徑
+  - 若尚未載入 prediction folder，才會要求選擇
+  - 結果會顯示 `reviewed / partial / pending / no_predictions` 的影像數，以及 accepted / rejected / remaining prediction 總數
+  - **Export CSV…** / **Export JSON…** 可匯出逐影像 review summary，方便做 project-level review 進度追蹤
 - 也可用選單 **File → Load YOLO model…** 載入模型，再用左側 **Run model** 按鈕或 **File → Run model prediction** 直接對當前影像推論
 - 模型直推論目前為 optional 功能，需要額外安裝 `ultralytics` 與 `torch`
 - 預測框以**橘色虛線**顯示在畫布上（與 GT 綠色實線區分）
@@ -131,6 +142,7 @@ python GUI.py
   - **Accept**：轉為正式 GT 標註（綠色框），從預測列表移除
   - **Reject**：刪除該筆預測
 - 選單 **File → Accept all visible predictions** / **Reject all visible predictions** 可對目前 conf threshold 下可見的 prediction 批次處理
+- 當當前影像的 predictions 全部處理完畢並進入 `reviewed` 狀態時，review queue 會自動跳到下一張待審影像
 - 選單 **File → Clear predictions** 清空所有預測
 
 ### 7. Error Analysis（誤差分析）
@@ -138,7 +150,8 @@ python GUI.py
 - 選單 **Analysis → Run error analysis…**
 - 可選 scope：
   - **Current image**：分析目前開啟影像的 GT 與目前載入的 predictions
-  - **Current folder**：掃描目前影像所在資料夾內的所有支援影像，並要求指定一個 **prediction folder**，以同 basename 的 `.txt` prediction sidecar 做配對
+  - **Current folder**：掃描目前影像所在資料夾內的所有支援影像，並要求指定一個 **prediction folder**；若目前 project config 可解析 `image_root`，會先找 `prediction_root/<image 相對路徑>/<basename>.txt`，找不到再 fallback 到 `prediction_root/<basename>.txt`
+  - **Current project**：若已載入 `project_config.yaml`，會以 `image_root` 為遞迴掃描範圍，並依 `label_root` / 選定的 `prediction root` 以相對路徑配對
 - 選單 **Analysis → Show GT/Pred IoU overlay** 可把 IoU 配對結果直接疊在主畫布上：
   - 已配對 GT / prediction 之間會畫出連線並標示 `TP / WrongClass / Localization / Duplicate` 與 IoU
   - 未配對 prediction 會在框旁標示 `FP`
@@ -161,10 +174,21 @@ python GUI.py
 | FN | 未匹配的 GT |
 
 - 可勾選 **Bookmark**、填寫 **Notes**
-- **Export CSV…** 匯出所有錯誤案例
+- 大量 folder / project cases 時，結果表格會限制實際渲染的前幾千筆，避免 Qt table 一次建立過多 row 造成記憶體暴增；上方 summary 仍會顯示完整 case 數
+- **Export CSV…** 仍會匯出所有錯誤案例，不只匯出表格目前顯示的前幾千筆
 - committed paste annotations 也會納入目前影像的 GT 集合一起分析，避免與實際匯出的 label 不一致
 - `Current folder` 也會顯示 **Image** 欄位，方便在多張圖之間追 case
-- `Current folder` 會優先使用目前 GUI 內已開啟影像的 live GT / paste / prediction 狀態，不必先手動另存才能分析這張圖
+- `Current folder` 只有在目前影像真的有 live GT / committed paste，或已載入並審核過的 live prediction 狀態時，才會用 GUI 內的狀態覆蓋該張圖；若目前 GUI 狀態是空的，會回到磁碟上的 label / prediction sidecar，避免 summary 把已存在的檔案誤算成 missing
+- `Current folder` 會顯示 **Predictions matched** 與 **Label root**，方便確認實際掃描到多少 prediction sidecar，以及 GT label 是從哪個目錄解析而來
+- 在真正打開 folder error analysis 結果前，會先顯示一個 summary，列出 `Images found / Labels matched / Predictions matched / Images analyzable / Confidence threshold`
+- `Current project` 也會在真正打開結果前顯示相同型態的 summary，但 scope 會改成整個 `image_root`
+- 若選到的 prediction folder 沒有任何同 basename 的 `.txt` prediction sidecar，會先提示你結果只會使用 GT labels
+- **Analysis → Start FP-to-label review…** 可直接用 folder / project error analysis 的 `FP` rows 建立補標 queue：
+  - 先選 scope 與 prediction folder，GUI 會依目前 `Pred conf >=` 門檻掃描 FP candidates
+  - 建立 queue 後會跳到第一個 FP 影像並選中對應 prediction
+  - **Analysis → Next FP** 跳到下一個 FP candidate；若下一個 candidate 仍在同一張影像，不會重新載圖，避免清掉尚未儲存的補標
+  - 可沿用 prediction list 的 **Change class… / Accept / Reject**；確認漏標後按 **Accept** 轉正式 GT，再補屬性並 **Save Label**
+  - FP review 期間不會觸發原本 prediction review 的自動跳下一張，避免干擾補標 queue
 
 ### 8. Dataset Statistics（統計分析）
 
@@ -172,6 +196,7 @@ python GUI.py
 - 可選 scope：
   - **Current image**：分析目前開啟影像的 **GT + committed paste annotations**
   - **Current folder**：掃描目前影像所在資料夾內的所有支援影像，按 basename 尋找對應 label sidecar
+  - **Current project**：若已載入 `project_config.yaml`，會以 `image_root` 為遞迴掃描範圍，並依 `label_root` 以相對路徑配對 GT labels
 - 多個分頁：
   - **Overview**：總影像數、總標註數、平均每張圖標註數、類別數
   - **Class dist**：各類別標註數量
@@ -183,9 +208,50 @@ python GUI.py
 - **Export JSON…** / **Export CSV…** 匯出統計結果
 - Overview 也會顯示 **Labeled images / Unlabeled images**
 - `Current folder` 目前優先讀取與影像同 basename 的 `.json` / `.txt` label sidecar；若 `project_config.yaml` 中有設定 `image_root / label_root`，也會嘗試依相對路徑對應到 label 目錄
-- 若目前開啟影像有尚未另存的新標註，`Current folder` 會以當前 GUI 內的 live annotations 覆蓋該張圖的磁碟 label，避免統計結果落後於你正在修的內容
+- 若沒有 `project_config.yaml`，但目前資料夾結構符合常見的 `images/` 與 sibling `labels/` 佈局，也會自動推斷 GT label 位置
+- folder-level statistics / error analysis 讀影像尺寸時會優先只讀常見格式（BMP/JPEG/PNG/GIF/TIFF）的檔頭，不會為了拿寬高而完整解碼整張影像，避免大量 BMP 掃描時記憶體暴增
+- 在真正打開 folder statistics 結果前，會先顯示一個 summary，列出 `Images found / Labels matched / Annotations found`
+- `Current project` 也會先顯示同型態的 summary，但 scope 會改成整個 `image_root`
+- 若目前開啟影像有尚未另存的新標註、committed paste，或曾載入後被清空的標註狀態，`Current folder` 會以當前 GUI 內的 live annotations 覆蓋該張圖的磁碟 label；若目前沒有 live annotation override，則會讀取磁碟上的 label sidecar
 
-### 9. Tile / Sliding Window（分格檢視）
+### 9. Dataset QC（批次驗證）
+
+- 選單 **Analysis → Dataset QC…**
+- 可選 scope：
+  - **Current folder**：掃描目前影像所在資料夾內的所有支援影像
+  - **Current project**：若已載入 `project_config.yaml`，會以 `image_root` 為遞迴掃描範圍
+- 執行前可選擇：
+  - **Include predictions…**：額外指定 prediction folder，一起檢查 prediction sidecar
+  - **Labels only**：只檢查 GT labels
+- 會先顯示 summary，列出：
+  - `Images found`
+  - `Labels matched`
+  - `Predictions matched`
+  - `Issues found`
+- 結果表格會列出：
+  - `Image`
+  - `Source`（label / prediction）
+  - `Issue type`
+  - `Line`
+  - `Detail`
+  - `File`
+- 結果視窗另提供：
+  - **Overview**：總影像數、matched labels / predictions、clean images、images with issues
+  - **Issue types**：各 issue type 的數量與受影響影像數
+- 目前內建檢查：
+  - missing label / missing prediction
+  - empty label / empty prediction
+  - YOLO 欄位數錯誤
+  - 無法解析數值
+  - 非法 class id
+  - normalized center / width / height 超出範圍
+  - bbox 超出 `[0, 1]`
+  - prediction confidence 超出 `[0, 1]`
+  - 無法讀取或不支援的 label 格式
+- **Export CSV…** 可匯出所有逐筆 issue
+- **Export Summary JSON…** 可匯出聚合 summary，方便做 dataset health 檢查、研究紀錄與後續自動化報表
+
+### 10. Tile / Sliding Window（分格檢視）
 
 - 左下角 **Tile view** 面板
 - 設定 **Size**（tile 邊長，預設 640）和 **Stride**（步幅，預設 480）
@@ -197,7 +263,7 @@ python GUI.py
   - Tile 面板會提示 **Boundary** 數量；若顯示 `Boundary: 2`，代表目前 tile 內有 2 個 GT 框跨越 tile 邊界，需留意重複標註或截斷漏標
 - tile 只是視角，所有標註始終寫回全圖座標，切換 tile 不會造成框漂移
 
-### 10. Copy-Paste（圖像貼上）
+### 11. Copy-Paste（圖像貼上）
 
 - 點擊 **Paste Image** 按鈕進入貼圖模式
 - 右下方 **Choose Image** 選擇 PNG asset（含 alpha 透明通道）
@@ -213,20 +279,20 @@ python GUI.py
 - 一旦 **Add** 成功，該 paste annotation 會視為正式可匯出標註，並納入 metadata export / statistics / error analysis
 - **Save Image** 會以原圖解析度重建合成結果，不會直接把當前 GUI 縮放畫面存出去；若想避免 JPEG 再壓縮，建議存成 PNG / BMP
 
-### 11. Metadata Export（屬性匯出）
+### 12. Metadata Export（屬性匯出）
 
 - 選單 **File → Export annotation metadata (JSON)…** / **(CSV)…**
 - 匯出每筆標註的完整欄位：image_path / class_id / class_name / super_category / x1 / y1 / x2 / y2 / size_tag / crowded / hard_sample / occluded / truncated / blurred / difficulty_tag / difficult_background / low_contrast / scene_tag / annotation_source
 - `annotation_source` 會標記來源為 `gt` 或 `paste`
 - metadata export 目前會把 **GT + committed paste annotations** 一起匯出
 
-### 12. Undo / Redo
+### 13. Undo / Redo
 
 - 選單 **Edit → Undo**（Windows / Linux：`Ctrl+Z`；macOS：`Cmd+Z`） / **Redo**（Windows / Linux：`Ctrl+Shift+Z` 或 `Ctrl+Y`；macOS：`Cmd+Shift+Z`）
 - 最多保留 50 步操作紀錄
 - 支援：新增框、刪除框、清除全部、重新命名、批次載入 label
 
-### 13. Autosave（自動存檔）
+### 14. Autosave（自動存檔）
 
 - 開圖後自動啟動定時器（預設 60 秒），週期性存檔到 `.autosave/` 目錄
 - 存檔格式：`<圖片名>.autosave.json`（含 real_data + box_attributes + object_list）
@@ -234,7 +300,7 @@ python GUI.py
 - 手動 Save Label 成功後自動清除 autosave 檔
 - 狀態列顯示 "Autosaved" / "Restored from autosave" / "Saved (autosave cleared)"
 
-### 14. Project Config（專案設定）
+### 15. Project Config（專案設定）
 
 - 選單 **File → Open project config…** / **Save project config…**
 - 設定檔格式為 `project_config.yaml`，包含：
@@ -320,7 +386,9 @@ GUI/
 │       ├── __init__.py             #     匯出所有 dialog
 │       ├── class_mapping_dialog.py #     Class mapping 編輯對話框
 │       ├── error_analysis_dialog.py#     Error analysis 結果表格 + CSV 匯出
+│       ├── prediction_review_report_dialog.py # Prediction review folder/project 報表
 │       ├── statistics_dialog.py    #     Dataset statistics 四分頁表格 + JSON/CSV 匯出
+│       ├── validation_dialog.py    #     Dataset QC issue table + CSV 匯出
 │       ├── input_window.py         #     legacy compatibility only（不屬於主流程）
 │       ├── showlab_window.py       #     Show Label 預覽視窗
 │       ├── saveimg_window.py       #     Save Image 對話框
@@ -340,10 +408,14 @@ GUI/
 │   ├── attributes.py               #   研究屬性欄位定義、size_tag 計算（COCO 閾值）
 │   ├── prediction.py               #   PredictionRecord、YOLO prediction 解析（含 confidence）
 │   ├── prediction_scan.py          #   prediction sidecar path / folder review helper
+│   ├── prediction_review.py        #   session-level review queue state / summary helper
+│   ├── prediction_review_report.py #   folder/project review summary + CSV/JSON helper
+│   ├── prediction_review_store.py  #   review queue persistence helper（resume / fresh / clear）
 │   ├── model_inference.py          #   optional YOLO model 載入 / 單張影像推論 helper
 │   ├── error_analysis.py           #   IoU 計算、GT-vs-pred greedy matching、ErrorCase、CSV 匯出
 │   ├── statistics.py               #   dataset 統計分析（class / size / bbox distributions）、JSON/CSV
 │   ├── error_analysis_scan.py      #   folder-level GT/pred 掃描與 ErrorCase 聚合
+│   ├── validation.py               #   dataset / project batch QC helper（label/prediction sidecar 檢查）
 │   ├── tile.py                     #   TileConfig / TileRect / compute_tile_grid / 座標轉換
 │   ├── augmentation.py             #   PasteRecord（copy-paste transform 紀錄）、JSON/CSV 匯出
 │   ├── paste_candidate.py          #   in-progress paste candidate session（暫存 transform / placement state）
@@ -372,12 +444,16 @@ GUI/
     ├── test_document.py            #   GT document API / 對齊保護測試
     ├── test_attributes.py          #   size_tag 計算、default_attributes 測試
     ├── test_metadata_export.py     #   build_annotation_records + JSON/CSV 匯出
-    ├── test_dataset_scan.py        #   folder label 掃描、image_root→label_root 對應
+    ├── test_dataset_scan.py        #   folder label 掃描、image_root→label_root 與 images→labels 推斷
     ├── test_prediction.py          #   YOLO prediction 解析（含/不含 confidence）
     ├── test_prediction_scan.py     #   prediction sidecar path / folder review helper
+    ├── test_prediction_review.py   #   review queue state / status / summary helper
+    ├── test_prediction_review_report.py # folder/project review summary 掃描與匯出
+    ├── test_prediction_review_store.py # review queue persistence round-trip / delete
     ├── test_error_analysis.py      #   IoU / matching / error_type / CSV 匯出
-    ├── test_error_analysis_scan.py #   folder-level GT/pred 掃描與 current-image override
+    ├── test_error_analysis_scan.py #   folder-level GT/pred 掃描、prediction match 計數與 current-image override
     ├── test_statistics.py          #   dataset stats 計算 + JSON/CSV 匯出
+    ├── test_validation.py          #   dataset/project QC helper 測試
     ├── test_tile.py                #   tile grid 計算 / 座標轉換 / annotations_in_tile
     ├── test_augmentation.py        #   PasteRecord / JSON/CSV 匯出
     ├── test_project_config.py      #   ProjectConfig YAML round-trip
@@ -393,7 +469,7 @@ pip install pytest
 pytest -q
 ```
 
-目前共 230 個測試，涵蓋所有 `sdde/` 模組的核心邏輯、legacy `data.yaml` 相容解析、GUI 與 service layer 之間的 row adapter、annotation controller 的狀態對齊保護、GT / paste document API、paste candidate session，以及 GT 與 paste 的 action / draw / list / preview / workspace / candidate controllers，其中也包含 paste payload 在含有 Qt `QImage` 物件時的提交回歸保護、`Load Label` 的 append/replace 路徑、GT + paste 的聚合 export / analysis 行為、`Current folder` statistics 的 label 掃描與 project-style 路徑對應、`Current folder` error analysis 的 GT/pred 掃描與 current-image override、`project_config` 對 classes/image/label/export default 的路徑接線，以及 folder-level prediction review / batch accept-reject 的 sidecar workflow。
+目前共 264 個測試，涵蓋所有 `sdde/` 模組的核心邏輯、legacy `data.yaml` 相容解析、GUI 與 service layer 之間的 row adapter、annotation controller 的狀態對齊保護、GT / paste document API、paste candidate session，以及 GT 與 paste 的 action / draw / list / preview / workspace / candidate controllers，其中也包含 paste payload 在含有 Qt `QImage` 物件時的提交回歸保護、`Load Label` 的 append/replace 路徑、GT + paste 的聚合 export / analysis 行為、`Current folder` 與 `Current project` statistics 的 label 掃描、preflight summary 與 project-style 路徑對應、未載入 project config 時的 `images/ -> labels/` 自動推斷、folder/project-level 的輕量 header size probe、`Current folder` / `Current project` error analysis 的 GT/pred 掃描、label/prediction match 計數 / preflight summary / current-image override、`Current folder` / `Current project` dataset QC 的 missing sidecar / invalid YOLO / out-of-range bbox 檢查與 summary export、folder/project-level 的 prediction review summary / CSV / JSON 匯出，以及 `project_config` 對 classes/image/label/export default 的路徑接線，還有 folder-level prediction review / batch accept-reject / review queue 的 sidecar workflow 與 persistence。
 如果準備進行重構，請再搭配 [`docs/manual_smoke_test.md`](docs/manual_smoke_test.md) 的手動 smoke test 清單一起回歸。
 
 ---

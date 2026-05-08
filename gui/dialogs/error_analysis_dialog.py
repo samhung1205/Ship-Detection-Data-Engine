@@ -27,6 +27,8 @@ from sdde.attributes import CROWDED_CHOICES, DIFFICULTY_CHOICES, SCENE_CHOICES, 
 class ErrorAnalysisDialog(QtWidgets.QDialog):
     """Modal dialog that runs analysis and presents error cases."""
 
+    MAX_TABLE_ROWS = 5000
+
     _COL_IMAGE = 0
     _COL_TYPE = 1
     _COL_IOU = 2
@@ -185,7 +187,9 @@ class ErrorAnalysisDialog(QtWidgets.QDialog):
         return combo
 
     def _sync_notes_and_bookmarks(self) -> None:
-        for row, c in enumerate(self._visible_cases):
+        table_rows = min(self._table.rowCount(), len(self._visible_cases))
+        for row in range(table_rows):
+            c = self._visible_cases[row]
             bm_item = self._table.item(row, self._COL_BOOKMARK)
             if bm_item is not None:
                 c.bookmarked = bm_item.checkState() == Qt.CheckState.Checked
@@ -219,13 +223,15 @@ class ErrorAnalysisDialog(QtWidgets.QDialog):
         summary = summarise_error_cases(self._visible_cases)
         parts = [f"{k}: {summary[k]}" for k in ALL_ERROR_TYPES if summary.get(k)]
         prefix = f"Showing {len(self._visible_cases)} / {len(self._cases)}"
-        self._summary_label.setText(
-            prefix + ("  |  " + "  |  ".join(parts) if parts else "  |  No cases in current filter.")
-        )
+        message = prefix + ("  |  " + "  |  ".join(parts) if parts else "  |  No cases in current filter.")
+        if len(self._visible_cases) > self.MAX_TABLE_ROWS:
+            message += f"  |  Table limited to first {self.MAX_TABLE_ROWS}; CSV exports all cases."
+        self._summary_label.setText(message)
 
     def _rebuild_table(self) -> None:
-        self._table.setRowCount(len(self._visible_cases))
-        for row, c in enumerate(self._visible_cases):
+        table_cases = self._visible_cases[: self.MAX_TABLE_ROWS]
+        self._table.setRowCount(len(table_cases))
+        for row, c in enumerate(table_cases):
             attrs = gt_attributes_for_case(c, self._gt_attributes)
             size_tag = attrs.get("size_tag", "-") if attrs else "-"
             scene_tag = attrs.get("scene_tag", "-") if attrs else "-"

@@ -134,7 +134,7 @@ def test_add_undo_redo() -> None:
     c = AnnotationController(w)
     _apply_add(c, "a", extended_object_list=True)
     assert len(w.data) == 1
-    assert w.object_list == ["a"]
+    assert w.object_list == []
     c.undo()
     assert len(w.data) == 0
     assert len(w.box_attributes) == 0
@@ -194,7 +194,8 @@ def test_remove_box_undo_redo_keeps_parallel_state_aligned() -> None:
 def test_rename_box_undo_redo_updates_object_list_and_labels() -> None:
     w = _FakeW()
     c = AnnotationController(w)
-    _apply_add(c, "naval", extended_object_list=True)
+    w.object_list = ["naval", "merchant"]
+    _apply_add(c, "naval", extended_object_list=False)
 
     c.apply(RenameBoxCommand(0, "naval", "merchant"))
 
@@ -208,7 +209,7 @@ def test_rename_box_undo_redo_updates_object_list_and_labels() -> None:
     assert w.data[0][0] == "naval"
     assert w.real_data[0][0] == "naval"
     assert w.listwidget.item(0).text() == "naval"
-    assert w.object_list == ["naval"]
+    assert w.object_list == ["naval", "merchant"]
 
 
 def test_update_box_geometry_undo_redo_restores_previous_rows() -> None:

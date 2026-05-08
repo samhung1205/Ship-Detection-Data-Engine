@@ -5,12 +5,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import struct
 from typing import Any, Mapping, Sequence
 
-import cv2
-
 from .import_export import import_json_label_file, import_yolo_hbb_label_file
-from .image_browser import list_supported_images
+from .image_browser import SUPPORTED_IMAGE_SUFFIXES, list_supported_images
 from .legacy_rows import class_mapping_from_object_list
 from .metadata_export import build_annotation_records
 
@@ -47,13 +46,14 @@ def scan_folder_annotation_records(
     *,
     object_list: Sequence[str],
     class_id_to_super: Mapping[int, str] | None = None,
+    recursive: bool = False,
     image_root: str | Path | None = None,
     label_root: str | Path | None = None,
     current_image_path: str | Path | None = None,
     current_image_records: Sequence[Mapping[str, Any]] | None = None,
 ) -> FolderAnnotationScanResult:
     folder_path = Path(folder)
-    image_paths = tuple(list_supported_images(folder_path))
+    image_paths = tuple(_list_image_paths(folder_path, recursive=recursive))
     current_image_resolved = _resolve_path_or_none(current_image_path)
     label_image_paths: list[str] = []
     records: list[dict[str, Any]] = []
@@ -196,6 +196,9 @@ def _candidate_label_paths(
     )
     if mapped_base is not None:
         bases.append(mapped_base)
+    inferred_base = _inferred_label_base(image_path)
+    if inferred_base is not None:
+        bases.append(inferred_base)
     bases.append(image_path.with_suffix(""))
 
     candidates: list[Path] = []
@@ -209,6 +212,19 @@ def _candidate_label_paths(
             seen.add(key)
             candidates.append(candidate)
     return candidates
+
+
+def _list_image_paths(folder: Path, *, recursive: bool) -> list[str]:
+    if not recursive:
+        return list_supported_images(folder)
+    if not folder.is_dir():
+        return []
+    images = [
+        str(path)
+        for path in folder.rglob("*")
+        if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES
+    ]
+    return sorted(images, key=lambda value: str(Path(value)).lower())
 
 
 def _mapped_label_base(
@@ -230,12 +246,176 @@ def _mapped_label_base(
     return label_root_path / image_path.stem
 
 
+def _inferred_label_base(image_path: Path) -> Path | None:
+    resolved = image_path.resolve()
+    image_roots = {"images", "imgs", "image"}
+    for ancestor in (resolved.parent, *resolved.parent.parents):
+        if ancestor.name.lower() not in image_roots:
+            continue
+        try:
+            rel = resolved.relative_to(ancestor)
+        except ValueError:
+            continue
+        return ancestor.parent / "labels" / rel.parent / rel.stem
+    return None
+
+
 def read_image_size(path: str | Path) -> tuple[int, int] | None:
-    img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-    if img is None or len(img.shape) < 2:
+    image_path = Path(path)
+    try:
+        with image_path.open("rb") as f:
+            header = f.read(256 * 1024)
+    except OSError:
         return None
-    height, width = int(img.shape[0]), int(img.shape[1])
-    return width, height
+    if len(header) < 10:
+        return None
+
+    size = (
+        _read_png_size(header)
+        or _read_gif_size(header)
+        or _read_bmp_size(header)
+        or _read_jpeg_size(header)
+        or _read_tiff_size(header)
+    )
+    return size
+
+
+def _read_png_size(header: bytes) -> tuple[int, int] | None:
+    if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    if header[12:16] != b"IHDR":
+        return None
+    width, height = struct.unpack(">II", header[16:24])
+    return int(width), int(height)
+
+
+def _read_gif_size(header: bytes) -> tuple[int, int] | None:
+    if len(header) < 10 or header[:6] not in (b"GIF87a", b"GIF89a"):
+        return None
+    width, height = struct.unpack("<HH", header[6:10])
+    return int(width), int(height)
+
+
+def _read_bmp_size(header: bytes) -> tuple[int, int] | None:
+    if len(header) < 26 or header[:2] != b"BM":
+        return None
+    dib_header_size = struct.unpack("<I", header[14:18])[0]
+    if dib_header_size < 12:
+        return None
+    if dib_header_size == 12:
+        width, height = struct.unpack("<HH", header[18:22])
+    else:
+        width, height = struct.unpack("<ii", header[18:26])
+        height = abs(height)
+    return int(width), int(height)
+
+
+def _read_jpeg_size(header: bytes) -> tuple[int, int] | None:
+    if len(header) < 4 or header[:2] != b"\xff\xd8":
+        return None
+    i = 2
+    while i + 9 < len(header):
+        if header[i] != 0xFF:
+            i += 1
+            continue
+        marker = header[i + 1]
+        i += 2
+        if marker in {0xD8, 0xD9}:
+            continue
+        if i + 2 > len(header):
+            return None
+        segment_length = struct.unpack(">H", header[i:i + 2])[0]
+        if segment_length < 2:
+            return None
+        if marker in {
+            0xC0, 0xC1, 0xC2, 0xC3,
+            0xC5, 0xC6, 0xC7,
+            0xC9, 0xCA, 0xCB,
+            0xCD, 0xCE, 0xCF,
+        }:
+            if i + 7 > len(header):
+                return None
+            height, width = struct.unpack(">HH", header[i + 3:i + 7])
+            return int(width), int(height)
+        i += segment_length
+    return None
+
+
+def _read_tiff_size(header: bytes) -> tuple[int, int] | None:
+    if len(header) < 8:
+        return None
+    byte_order = header[:2]
+    if byte_order == b"II":
+        endian = "<"
+    elif byte_order == b"MM":
+        endian = ">"
+    else:
+        return None
+    magic = struct.unpack(f"{endian}H", header[2:4])[0]
+    if magic != 42:
+        return None
+    ifd_offset = struct.unpack(f"{endian}I", header[4:8])[0]
+    if ifd_offset + 2 > len(header):
+        return None
+    entry_count = struct.unpack(f"{endian}H", header[ifd_offset:ifd_offset + 2])[0]
+    width = None
+    height = None
+    entry_start = ifd_offset + 2
+    for idx in range(entry_count):
+        offset = entry_start + idx * 12
+        if offset + 12 > len(header):
+            break
+        tag, field_type, count, value_or_offset = struct.unpack(
+            f"{endian}HHII", header[offset:offset + 12]
+        )
+        if tag not in {256, 257}:
+            continue
+        value = _tiff_entry_value(
+            header,
+            endian=endian,
+            field_type=field_type,
+            count=count,
+            value_or_offset=value_or_offset,
+        )
+        if value is None:
+            continue
+        if tag == 256:
+            width = value
+        elif tag == 257:
+            height = value
+        if width is not None and height is not None:
+            return int(width), int(height)
+    return None
+
+
+def _tiff_entry_value(
+    header: bytes,
+    *,
+    endian: str,
+    field_type: int,
+    count: int,
+    value_or_offset: int,
+) -> int | None:
+    if count != 1:
+        return None
+    if field_type == 3:
+        if endian == "<":
+            return int(value_or_offset & 0xFFFF)
+        return int(value_or_offset >> 16)
+    if field_type == 4:
+        return int(value_or_offset)
+    value_sizes = {3: 2, 4: 4}
+    size = value_sizes.get(field_type)
+    if size is None:
+        return None
+    if value_or_offset + size > len(header):
+        return None
+    value_bytes = header[value_or_offset:value_or_offset + size]
+    if field_type == 3:
+        return int(struct.unpack(f"{endian}H", value_bytes)[0])
+    if field_type == 4:
+        return int(struct.unpack(f"{endian}I", value_bytes)[0])
+    return None
 
 
 def _build_annotation_payloads(

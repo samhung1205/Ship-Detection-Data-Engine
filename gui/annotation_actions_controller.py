@@ -109,7 +109,7 @@ class AnnotationActionsController:
         if rows is None:
             return None
         data_row, real_row = rows
-        return data_row, real_row, item, item not in self._get_object_names()
+        return data_row, real_row, item, False
 
     def build_add_box_from_prediction(
         self,
@@ -134,7 +134,7 @@ class AnnotationActionsController:
             canvas_height,
         ]
         real_row = [item, int(pred.x1), int(pred.y1), int(pred.x2), int(pred.y2)]
-        return data_row, real_row, item, item not in self._get_object_names()
+        return data_row, real_row, item, False
 
     def add_box(
         self,

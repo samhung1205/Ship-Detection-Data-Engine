@@ -31,9 +31,6 @@ def load_class_catalog(
         project_root,
         classes_yaml=classes_yaml,
     )
-    try:
-        if path.exists():
-            return load_classes_yaml_path(path)
-    except (OSError, ValueError, KeyError):
-        pass
+    if path.exists():
+        return load_classes_yaml_path(path)
     return default_ship_catalog()

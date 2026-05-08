@@ -44,6 +44,29 @@ from .prediction_scan import (
     load_prediction_sidecar,
     prediction_sidecar_path,
 )
+from .prediction_review import (
+    PredictionReviewState,
+    clone_predictions,
+    initial_prediction_review_state,
+    prediction_review_status,
+    prediction_review_summary,
+    update_prediction_review_state,
+)
+from .prediction_review_report import (
+    PredictionReviewReport,
+    PredictionReviewReportEntry,
+    build_prediction_review_report_summary,
+    export_prediction_review_report_csv,
+    export_prediction_review_report_json,
+    scan_prediction_review_report,
+)
+from .prediction_review_store import (
+    has_prediction_review_session,
+    load_prediction_review_session,
+    remove_prediction_review_session,
+    review_state_path,
+    save_prediction_review_session,
+)
 from .error_analysis import (
     ALL_ERROR_TYPES,
     ERROR_FILTER_ALL,
@@ -95,6 +118,14 @@ from .dataset_scan import (
     scan_folder_annotation_records,
 )
 from .error_analysis_scan import FolderErrorAnalysisResult, scan_folder_error_cases
+from .validation import (
+    DatasetValidationResult,
+    ValidationIssue,
+    build_validation_summary,
+    export_validation_issues_csv,
+    export_validation_summary_json,
+    scan_dataset_validation,
+)
 from .paste_candidate import PasteCandidateSession
 from .paste_document import PasteDocument, PasteEntryState
 from .legacy_rows import (
@@ -145,6 +176,18 @@ __all__ = [
     "has_prediction_sidecar",
     "load_prediction_sidecar",
     "prediction_sidecar_path",
+    "PredictionReviewState",
+    "PredictionReviewReport",
+    "PredictionReviewReportEntry",
+    "clone_predictions",
+    "build_prediction_review_report_summary",
+    "export_prediction_review_report_csv",
+    "export_prediction_review_report_json",
+    "initial_prediction_review_state",
+    "prediction_review_status",
+    "prediction_review_summary",
+    "scan_prediction_review_report",
+    "update_prediction_review_state",
     "ALL_ERROR_TYPES",
     "ERROR_FILTER_ALL",
     "ErrorCase",
@@ -184,6 +227,9 @@ __all__ = [
     "AnnotationDocumentSnapshot",
     "FolderAnnotationScanResult",
     "FolderErrorAnalysisResult",
+    "DatasetValidationResult",
+    "ValidationIssue",
+    "build_validation_summary",
     "ImageAnnotationBundle",
     "PasteCandidateSession",
     "PasteDocument",
@@ -199,6 +245,9 @@ __all__ = [
     "read_image_size",
     "scan_folder_annotation_records",
     "scan_folder_error_cases",
+    "export_validation_issues_csv",
+    "export_validation_summary_json",
+    "scan_dataset_validation",
     "YoloModelHandle",
     "load_yolo_model",
     "run_yolo_model_inference",

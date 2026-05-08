@@ -125,7 +125,7 @@ def _make_controller(
 
 def test_paste_actions_controller_adds_candidate_and_record() -> None:
     ctx = _make_controller(
-        object_names=["naval"],
+        object_names=["naval", "merchant"],
         ask_label=lambda _parent, _names: ("merchant", True),
     )
 
@@ -168,7 +168,7 @@ def test_paste_actions_controller_restores_canvas_when_add_is_cancelled() -> Non
 
 def test_paste_actions_controller_renames_selected_row_and_record() -> None:
     ctx = _make_controller(
-        object_names=["naval"],
+        object_names=["naval", "merchant"],
         ask_label=lambda _parent, _names: ("merchant", True),
     )
     ctx["controller"].add_candidate(
@@ -189,8 +189,46 @@ def test_paste_actions_controller_renames_selected_row_and_record() -> None:
     assert ctx["object_list"] == ["naval", "merchant"]
 
 
+def test_paste_actions_controller_rejects_unknown_class_names() -> None:
+    ctx = _make_controller(object_names=["naval"])
+
+    added = ctx["controller"].add_candidate(
+        class_name="merchant",
+        bbox_row=[10, 20, 30, 40, 200, 100],
+        real_bbox_row=[100, 200, 300, 400],
+        paste_image=["rgba"],
+        preview_canvas="preview-canvas",
+    )
+
+    assert added is False
+    assert ctx["document"].pimg_data == []
+
+
+def test_paste_actions_controller_rejects_unknown_rename_without_mutating_rows() -> None:
+    ctx = _make_controller(
+        object_names=["naval"],
+        ask_label=lambda _parent, _names: ("merchant", True),
+    )
+    ctx["controller"].add_candidate(
+        class_name="naval",
+        bbox_row=[10, 20, 30, 40, 200, 100],
+        real_bbox_row=[100, 200, 300, 400],
+        paste_image=["rgba"],
+        preview_canvas="preview-canvas",
+    )
+    ctx["list_widget"].setCurrentRow(0)
+
+    from unittest.mock import patch
+    with patch("gui.paste_actions_controller.QtWidgets.QMessageBox.information") as info:
+        ctx["controller"].rename_selected()
+
+    info.assert_called_once()
+    assert ctx["document"].pimg_data[0][0] == "naval"
+
+
 def test_paste_actions_controller_removes_and_clears_rows() -> None:
     ctx = _make_controller(
+        object_names=["naval", "merchant"],
         confirm_clear_all=lambda _parent: True,
     )
     ctx["controller"].add_candidate(

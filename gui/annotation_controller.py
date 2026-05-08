@@ -52,8 +52,6 @@ class AddBoxCommand:
     def apply(self, w: Any) -> None:
         doc = _gt_document(w)
         w.gt_list_view.add_item(self._label_text)
-        if self._extended_object_list:
-            w.object_list.append(self._label_text)
         doc.append_box(self._data_row, self._real_row)
         # Prefer full redraw over partial canvas hacks (matches set_img_ratio pipeline).
         if w.hideBox.isChecked():
@@ -64,8 +62,6 @@ class AddBoxCommand:
         doc = _gt_document(w)
         doc.remove_box(-1)
         w.gt_list_view.remove_item(w.gt_list_view.count() - 1)
-        if self._extended_object_list:
-            w.object_list.pop()
         _refresh_canvas(w)
 
 
@@ -136,10 +132,6 @@ class RenameBoxCommand:
         i = self._index
         doc.rename_box(i, self._new_name)
         w.gt_list_view.rename_item(i, self._new_name)
-        self._extended_object_list = False
-        if self._new_name not in w.object_list:
-            w.object_list.append(self._new_name)
-            self._extended_object_list = True
         _refresh_canvas(w)
 
     def unapply(self, w: Any) -> None:
@@ -147,8 +139,6 @@ class RenameBoxCommand:
         i = self._index
         doc.rename_box(i, self._old_name)
         w.gt_list_view.rename_item(i, self._old_name)
-        if self._extended_object_list:
-            w.object_list.remove(self._new_name)
         _refresh_canvas(w)
 
 

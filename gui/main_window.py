@@ -31,7 +31,7 @@ from .paste_preview_controller import PastePreviewController
 from .annotation_workspace_controller import AnnotationWorkspaceController
 from .canvas_widget import ImageCanvasWidget
 from .annotation_controller import AnnotationController
-from sdde.class_catalog import ClassCatalog
+from sdde.class_catalog import ClassCatalog, default_ship_catalog
 from sdde.model_inference import YoloModelHandle, load_yolo_model, run_yolo_model_inference
 
 from .class_mapping_service import load_class_catalog
@@ -40,7 +40,9 @@ from .dialogs import (
     ClassMappingDialog,
     ErrorAnalysisDialog,
     PasteEffectsDialog,
+    PredictionReviewReportDialog,
     StatisticsDialog,
+    ValidationDialog,
     ShowlabWindow,
     SaveimgWindow,
     SavelabWindow,
@@ -54,7 +56,7 @@ from sdde.tile import (
     find_neighbor_tile_index,
     find_tile_index_by_point,
 )
-from sdde.error_analysis import match_gt_pred
+from sdde.error_analysis import ERROR_FP, ErrorCase, match_gt_pred
 from sdde.metadata_export import export_annotations_csv, export_annotations_json
 from sdde.prediction import (
     STATUS_EDITED,
@@ -67,6 +69,21 @@ from sdde.prediction import (
 from sdde.prediction_scan import (
     has_prediction_sidecar,
     load_prediction_sidecar,
+)
+from sdde.prediction_review import (
+    PredictionReviewState,
+    clone_predictions,
+    initial_prediction_review_state,
+    prediction_review_status,
+    prediction_review_summary,
+    update_prediction_review_state,
+)
+from sdde.prediction_review_report import scan_prediction_review_report
+from sdde.prediction_review_store import (
+    has_prediction_review_session,
+    load_prediction_review_session,
+    remove_prediction_review_session,
+    save_prediction_review_session,
 )
 from sdde.augmentation import (
     PasteAdjustments,
@@ -96,6 +113,7 @@ from sdde.paste_document import PasteDocument
 from sdde.paste_planning import normalize_rect, scale_hint_for_size_tag, size_tag_for_scale_factor
 from sdde.import_export import import_json_label_file, import_yolo_hbb_label_file
 from sdde.legacy_rows import class_mapping_from_object_list, legacy_blocks_from_annotations
+from sdde.validation import scan_dataset_validation
 
 
 class MyWidget(QtWidgets.QWidget):
@@ -137,9 +155,14 @@ class MyWidget(QtWidgets.QWidget):
         self._folder_image_paths: list[str] = []
         self._folder_image_index = -1
         self._prediction_folder_path: Path | None = None
+        self._prediction_review_states: dict[str, PredictionReviewState] = {}
         self.predictions: list = []
         self._prediction_conf_threshold = 0.0
         self._visible_prediction_indices: list[int] = []
+        self._fp_review_queue: list[ErrorCase] = []
+        self._fp_review_index = -1
+        self._fp_review_prediction_root: Path | None = None
+        self._fp_review_conf_threshold = 0.0
         self._yolo_model_handle: YoloModelHandle | None = None
         self._yolo_model_path = ""
         self._error_overlay_enabled = False
@@ -250,7 +273,15 @@ class MyWidget(QtWidgets.QWidget):
 
     def _bootstrap_class_catalog(self) -> None:
         """Load classes.yaml (or defaults) so YOLO class index matches PRD mapping."""
-        self.class_catalog = load_class_catalog(classes_yaml_path=self._classes_yaml_path())
+        try:
+            self.class_catalog = load_class_catalog(classes_yaml_path=self._classes_yaml_path())
+        except (OSError, ValueError, KeyError) as exc:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Class mapping",
+                f"Failed to load classes.yaml:\n{self._classes_yaml_path()}\n\n{exc}",
+            )
+            self.class_catalog = default_ship_catalog()
         self.object_list = list(self.class_catalog.names_ordered())
         if self.object_list:
             self._enable_tools_after_classes_ready()
@@ -315,10 +346,57 @@ class MyWidget(QtWidgets.QWidget):
         has_visible_predictions = bool(self._visible_prediction_indices)
         if hasattr(self, "action_next_review_image"):
             self.action_next_review_image.setDisabled(not can_navigate_review)
+        if hasattr(self, "action_clear_saved_review"):
+            self.action_clear_saved_review.setDisabled(not self._can_manage_prediction_review_session())
         if hasattr(self, "action_accept_all_preds"):
             self.action_accept_all_preds.setDisabled(not has_visible_predictions)
         if hasattr(self, "action_reject_all_preds"):
             self.action_reject_all_preds.setDisabled(not has_visible_predictions)
+        if hasattr(self, "action_review_summary"):
+            self.action_review_summary.setDisabled(not bool(self.imgfilePath))
+        self._refresh_fp_review_actions()
+        self._refresh_prediction_review_status_label()
+
+    def _refresh_prediction_review_status_label(self) -> None:
+        if not hasattr(self, "lbl_review_status"):
+            return
+        fp_status = self._fp_review_status_text()
+        if self._prediction_folder_path is None or not self._folder_image_paths:
+            self.lbl_review_status.setText(fp_status)
+            return
+        review_images = [path for path in self._folder_image_paths if self._has_review_prediction_for_image(path)]
+        pending_images = [
+            path
+            for path in review_images
+            if self._review_status_for_image(path) != "reviewed"
+        ]
+        current_summary = ""
+        if self.imgfilePath and self._has_review_prediction_for_image(self.imgfilePath):
+            state = self._prediction_review_states.get(self._review_key(self.imgfilePath))
+            if state is not None:
+                current_summary = f" | current {prediction_review_summary(state)}"
+            else:
+                current_summary = " | current pending"
+        text = f"Review queue: {len(pending_images)} pending / {len(review_images)} with preds{current_summary}"
+        if fp_status:
+            text += f" | {fp_status}"
+        self.lbl_review_status.setText(text)
+
+    def _refresh_fp_review_actions(self) -> None:
+        has_queue = bool(self._fp_review_queue)
+        if hasattr(self, "action_next_fp_review"):
+            self.action_next_fp_review.setDisabled(not has_queue)
+        if hasattr(self, "action_clear_fp_review"):
+            self.action_clear_fp_review.setDisabled(not has_queue)
+
+    def _fp_review_status_text(self) -> str:
+        if not self._fp_review_queue:
+            return ""
+        total = len(self._fp_review_queue)
+        if 0 <= self._fp_review_index < total:
+            image_name = Path(self._fp_review_queue[self._fp_review_index].image_id).name
+            return f"FP review: {self._fp_review_index + 1}/{total} {image_name}"
+        return f"FP review: {total} queued"
 
     def _try_load_default_project_config(self) -> None:
         """Load project_config.yaml from CWD if it exists."""
@@ -334,7 +412,15 @@ class MyWidget(QtWidgets.QWidget):
     def _apply_project_config(self) -> None:
         """Push ProjectConfig values into UI widgets."""
         cfg = self._project_config
-        self.class_catalog = load_class_catalog(classes_yaml_path=self._classes_yaml_path())
+        try:
+            self.class_catalog = load_class_catalog(classes_yaml_path=self._classes_yaml_path())
+        except (OSError, ValueError, KeyError) as exc:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Project config",
+                f"Failed to load classes.yaml from project config:\n{self._classes_yaml_path()}\n\n{exc}",
+            )
+            self.class_catalog = default_ship_catalog()
         self.object_list = list(self.class_catalog.names_ordered())
         self._tile_panel.spin_size.setValue(cfg.tile_size)
         self._tile_panel.spin_stride.setValue(cfg.tile_stride)
@@ -591,6 +677,11 @@ class MyWidget(QtWidgets.QWidget):
         self.lbl_image_nav.setGeometry(center_x + 315, 596, 300, 16)
         self.lbl_image_nav.setStyleSheet("font-size: 11px; color: #888;")
         self.lbl_image_nav.setText("")
+
+        self.lbl_review_status = QtWidgets.QLabel(self)
+        self.lbl_review_status.setGeometry(center_x, 614, 620, 16)
+        self.lbl_review_status.setStyleSheet("font-size: 11px; color: #888;")
+        self.lbl_review_status.setText("")
 
         ### label_button ###
         self.btn_label = QtWidgets.QPushButton(self)
@@ -957,6 +1048,10 @@ class MyWidget(QtWidgets.QWidget):
         self.action_next_review_image.setDisabled(True)
         self.action_next_review_image.triggered.connect(self.open_next_review_image)
         self.menu_file.addAction(self.action_next_review_image)
+        self.action_clear_saved_review = QAction('Clear saved review state…')
+        self.action_clear_saved_review.setDisabled(True)
+        self.action_clear_saved_review.triggered.connect(self.clear_saved_prediction_review_state)
+        self.menu_file.addAction(self.action_clear_saved_review)
         self.action_load_model = QAction('Load YOLO model…')
         self.action_load_model.setDisabled(True)
         self.action_load_model.triggered.connect(self.load_yolo_model_dialog)
@@ -1088,6 +1183,17 @@ class MyWidget(QtWidgets.QWidget):
         self.action_run_error = QAction('Run error analysis…')
         self.action_run_error.triggered.connect(self.run_error_analysis)
         self.menu_analysis.addAction(self.action_run_error)
+        self.action_start_fp_review = QAction('Start FP-to-label review…')
+        self.action_start_fp_review.triggered.connect(self.start_fp_to_label_review)
+        self.menu_analysis.addAction(self.action_start_fp_review)
+        self.action_next_fp_review = QAction('Next FP')
+        self.action_next_fp_review.setDisabled(True)
+        self.action_next_fp_review.triggered.connect(self.open_next_fp_review_case)
+        self.menu_analysis.addAction(self.action_next_fp_review)
+        self.action_clear_fp_review = QAction('Clear FP review queue')
+        self.action_clear_fp_review.setDisabled(True)
+        self.action_clear_fp_review.triggered.connect(self.clear_fp_review_queue)
+        self.menu_analysis.addAction(self.action_clear_fp_review)
         self.action_toggle_error_overlay = QAction('Show GT/Pred IoU overlay')
         self.action_toggle_error_overlay.setCheckable(True)
         self.action_toggle_error_overlay.toggled.connect(self._toggle_error_overlay)
@@ -1095,6 +1201,13 @@ class MyWidget(QtWidgets.QWidget):
         self.action_show_stats = QAction('Dataset statistics…')
         self.action_show_stats.triggered.connect(self.show_statistics)
         self.menu_analysis.addAction(self.action_show_stats)
+        self.action_run_validation = QAction('Dataset QC…')
+        self.action_run_validation.triggered.connect(self.run_dataset_qc)
+        self.menu_analysis.addAction(self.action_run_validation)
+        self.action_review_summary = QAction('Prediction review summary…')
+        self.action_review_summary.setDisabled(True)
+        self.action_review_summary.triggered.connect(self.show_prediction_review_summary)
+        self.menu_analysis.addAction(self.action_review_summary)
         self.menubar.addMenu(self.menu_analysis)
 
         ### open_button ###
@@ -1660,6 +1773,7 @@ class MyWidget(QtWidgets.QWidget):
         )
         if ok:
             self._refresh_pred_listwidget()
+            self._sync_current_prediction_review_state()
         return ok
 
     def _clear_gt_selection(self, *, redraw: bool) -> None:
@@ -1810,6 +1924,7 @@ class MyWidget(QtWidgets.QWidget):
             return
         self._refresh_pred_listwidget()
         self._preview_prediction_row(pred_idx)
+        self._sync_current_prediction_review_state()
 
     def _open_prediction_context_menu(self, pos) -> None:
         item = self.pred_listwidget.itemAt(pos)
@@ -1932,6 +2047,7 @@ class MyWidget(QtWidgets.QWidget):
             return
         self._refresh_pred_listwidget()
         self.set_img_ratio()
+        self._sync_current_prediction_review_state()
 
     def load_prediction_folder(self) -> None:
         folder = QtWidgets.QFileDialog.getExistingDirectory(
@@ -1941,7 +2057,22 @@ class MyWidget(QtWidgets.QWidget):
         )
         if not folder:
             return
-        self._prediction_folder_path = Path(folder)
+        new_folder = Path(folder)
+        previous_folder = self._prediction_folder_path
+        previous_states = dict(self._prediction_review_states)
+        if self._prediction_folder_path is None or new_folder.resolve() != self._prediction_folder_path.resolve():
+            self._prediction_review_states.clear()
+        self._prediction_folder_path = new_folder
+        session_mode = self._prompt_prediction_review_resume_mode()
+        if session_mode is None:
+            self._prediction_folder_path = previous_folder
+            self._prediction_review_states = previous_states
+            return
+        if session_mode == "fresh":
+            self._prediction_review_states.clear()
+            self._clear_saved_prediction_review_session()
+        else:
+            self._prediction_review_states = self._load_saved_prediction_review_session()
         self._refresh_prediction_review_actions()
         self._auto_load_predictions_for_current_image()
 
@@ -1969,6 +2100,8 @@ class MyWidget(QtWidgets.QWidget):
         else:
             self.pred_listwidget.setCurrentRow(-1)
         self._gt_actions.add_box(*payload)
+        self._sync_current_prediction_review_state(accepted_delta=1)
+        self._maybe_advance_prediction_review()
         # Redraw via AddBoxCommand._refresh_canvas (no duplicate orange pred).
 
     def accept_all_visible_predictions(self) -> None:
@@ -1994,6 +2127,8 @@ class MyWidget(QtWidgets.QWidget):
         self._refresh_pred_listwidget()
         self.pred_listwidget.setCurrentRow(-1)
         self._gt_actions.append_blocks(blocks)
+        self._sync_current_prediction_review_state(accepted_delta=len(accepted_indices))
+        self._maybe_advance_prediction_review()
 
     def reject_all_visible_predictions(self) -> None:
         visible_indices = list(self._visible_prediction_indices)
@@ -2004,6 +2139,8 @@ class MyWidget(QtWidgets.QWidget):
         self._refresh_pred_listwidget()
         self.pred_listwidget.setCurrentRow(-1)
         self.set_img_ratio()
+        self._sync_current_prediction_review_state(rejected_delta=len(visible_indices))
+        self._maybe_advance_prediction_review()
 
     def reject_selected_prediction(self) -> None:
         row = self.pred_listwidget.currentRow()
@@ -2018,6 +2155,8 @@ class MyWidget(QtWidgets.QWidget):
         else:
             self.pred_listwidget.setCurrentRow(-1)
         self.set_img_ratio()
+        self._sync_current_prediction_review_state(rejected_delta=1)
+        self._maybe_advance_prediction_review()
 
     # --- Tile view -----------------------------------------------------------
 
@@ -2079,11 +2218,57 @@ class MyWidget(QtWidgets.QWidget):
         scope = self._prompt_error_analysis_scope()
         if scope is None:
             return
+        if scope == "project":
+            prediction_root = self._prompt_prediction_folder()
+            if prediction_root is None:
+                return
+            result = self._scan_current_project_error_cases(prediction_root)
+            if not self._confirm_project_error_analysis_run(result):
+                return
+            if result.total_images > 0 and result.prediction_images == 0:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Error analysis",
+                    "No matching prediction sidecars were found in the selected prediction folder. "
+                    "Results will only use GT labels in the current project scope.",
+                )
+            if not result.cases:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Error analysis",
+                    "No GT annotations or predictions were found in the current project scope.",
+                )
+                return
+            dlg = ErrorAnalysisDialog(
+                self,
+                gt_boxes=[],
+                gt_attributes=None,
+                predictions=[],
+                cases=list(result.cases),
+                scope_label="Current project",
+                detail_label=(
+                    f"Images analyzed: {result.analyzed_images} / {result.total_images}  |  "
+                    f"Predictions matched: {result.prediction_images}  |  "
+                    f"Label root: {self._project_label_root_display()}  |  "
+                    f"Prediction root: {result.prediction_root}"
+                ),
+            )
+            dlg.exec()
+            return
         if scope == "folder":
             prediction_root = self._prompt_prediction_folder()
             if prediction_root is None:
                 return
             result = self._scan_current_folder_error_cases(prediction_root)
+            if not self._confirm_folder_error_analysis_run(result):
+                return
+            if result.total_images > 0 and result.prediction_images == 0:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Error analysis",
+                    "No matching prediction sidecars were found in the selected prediction folder. "
+                    "Results will only use GT labels in the current folder scope.",
+                )
             if not result.cases:
                 QtWidgets.QMessageBox.information(
                     self,
@@ -2100,6 +2285,8 @@ class MyWidget(QtWidgets.QWidget):
                 scope_label="Current folder",
                 detail_label=(
                     f"Images analyzed: {result.analyzed_images} / {result.total_images}  |  "
+                    f"Predictions matched: {result.prediction_images}  |  "
+                    f"Label root: {self._folder_label_root_display()}  |  "
                     f"Prediction folder: {result.prediction_root}"
                 ),
             )
@@ -2123,21 +2310,223 @@ class MyWidget(QtWidgets.QWidget):
         )
         dlg.exec()
 
+    def start_fp_to_label_review(self) -> None:
+        scope = self._prompt_fp_review_scope()
+        if scope is None:
+            return
+        prediction_root = self._prompt_prediction_folder()
+        if prediction_root is None:
+            return
+        if scope == "project":
+            result = self._scan_current_project_error_cases(prediction_root)
+            if not self._confirm_project_error_analysis_run(result):
+                return
+        else:
+            result = self._scan_current_folder_error_cases(prediction_root)
+            if not self._confirm_folder_error_analysis_run(result):
+                return
+
+        fp_cases = [
+            case
+            for case in result.cases
+            if case.error_type == ERROR_FP and case.pred_index is not None and case.image_id
+        ]
+        if not fp_cases:
+            QtWidgets.QMessageBox.information(
+                self,
+                "FP-to-label review",
+                "No FP prediction candidates were found at the current confidence threshold.",
+            )
+            self.clear_fp_review_queue()
+            return
+
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "FP-to-label review",
+            (
+                f"Build FP-to-label queue with {len(fp_cases)} FP candidates?\n\n"
+                f"Confidence threshold: {self._prediction_conf_threshold:.2f}\n"
+                "Use Next FP to jump between candidates. Save Label after accepting corrections for an image."
+            ),
+            QtWidgets.QMessageBox.StandardButton.Ok | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Ok,
+        )
+        if answer != QtWidgets.QMessageBox.StandardButton.Ok:
+            return
+
+        self._sync_current_prediction_review_state()
+        self._fp_review_queue = list(fp_cases)
+        self._fp_review_index = 0
+        self._fp_review_prediction_root = Path(prediction_root)
+        self._fp_review_conf_threshold = self._prediction_conf_threshold
+        self._refresh_prediction_review_actions()
+        self._open_current_fp_review_case()
+
+    def open_next_fp_review_case(self) -> None:
+        if not self._fp_review_queue:
+            QtWidgets.QMessageBox.information(
+                self,
+                "FP-to-label review",
+                "No FP review queue is active.",
+            )
+            return
+        if self._fp_review_index < 0:
+            self._fp_review_index = 0
+        else:
+            self._fp_review_index += 1
+        if self._fp_review_index >= len(self._fp_review_queue):
+            self._fp_review_index = len(self._fp_review_queue) - 1
+            QtWidgets.QMessageBox.information(
+                self,
+                "FP-to-label review",
+                "Reached the end of the FP review queue.",
+            )
+            self._refresh_prediction_review_actions()
+            return
+        self._open_current_fp_review_case()
+
+    def clear_fp_review_queue(self) -> None:
+        self._fp_review_queue.clear()
+        self._fp_review_index = -1
+        self._fp_review_prediction_root = None
+        self._refresh_prediction_review_actions()
+
+    def _open_current_fp_review_case(self) -> None:
+        if not (0 <= self._fp_review_index < len(self._fp_review_queue)):
+            return
+        case = self._fp_review_queue[self._fp_review_index]
+        if not case.image_id:
+            return
+        target_path = str(Path(case.image_id))
+        same_image = False
+        if self.imgfilePath:
+            try:
+                same_image = Path(self.imgfilePath).resolve() == Path(target_path).resolve()
+            except OSError:
+                same_image = self.imgfilePath == target_path
+        if not same_image:
+            if not self._load_image_file(target_path, ask_confirm=True):
+                return
+            self._sync_folder_images_from_path(target_path)
+            self._load_fp_review_predictions_for_current_image()
+        elif not self.predictions:
+            self._load_fp_review_predictions_for_current_image()
+        self._restore_fp_review_threshold()
+        selected = self._select_fp_review_prediction(case)
+        self.chk_show_preds.setChecked(True)
+        self.set_img_ratio()
+        self._refresh_prediction_review_actions()
+        if not selected:
+            QtWidgets.QMessageBox.information(
+                self,
+                "FP-to-label review",
+                "This FP candidate is no longer visible in the current prediction list. It may have already been accepted, rejected, or filtered by confidence.",
+            )
+
+    def _load_fp_review_predictions_for_current_image(self) -> None:
+        if (
+            self._fp_review_prediction_root is None
+            or not self.imgfilePath
+            or not getattr(self, "origin_width", None)
+            or not getattr(self, "origin_height", None)
+        ):
+            return
+        try:
+            self.predictions = load_prediction_sidecar(
+                self.imgfilePath,
+                prediction_root=self._fp_review_prediction_root,
+                object_list=self.object_list,
+                image_w=self.origin_width,
+                image_h=self.origin_height,
+            )
+        except (OSError, ValueError, IndexError):
+            self.predictions = []
+        self.chk_show_preds.setChecked(True)
+        self._refresh_pred_listwidget()
+
+    def _restore_fp_review_threshold(self) -> None:
+        value = int(round(self._fp_review_conf_threshold * 100.0))
+        value = max(0, min(100, value))
+        if self.slider_pred_conf.value() != value:
+            self.slider_pred_conf.setValue(value)
+        else:
+            self._prediction_conf_threshold = float(value) / 100.0
+            self._refresh_prediction_threshold_label()
+            self._refresh_pred_listwidget()
+
+    def _select_fp_review_prediction(self, case: ErrorCase) -> bool:
+        self._refresh_pred_listwidget()
+        pred_idx = self._find_prediction_index_for_fp_case(case)
+        if pred_idx is None:
+            return False
+        try:
+            row = self._visible_prediction_indices.index(pred_idx)
+        except ValueError:
+            return False
+        self.pred_listwidget.setCurrentRow(row)
+        return True
+
+    def _find_prediction_index_for_fp_case(self, case: ErrorCase) -> int | None:
+        target_box = case.pred_box
+        visible = list(self._visible_prediction_indices)
+        if target_box is not None:
+            for idx in visible:
+                pred = self.predictions[idx]
+                pred_box = (float(pred.x1), float(pred.y1), float(pred.x2), float(pred.y2))
+                if not self._boxes_close(pred_box, target_box):
+                    continue
+                if case.pred_class and pred.class_name != case.pred_class:
+                    continue
+                if abs(float(pred.confidence) - float(case.confidence)) > 1e-3:
+                    continue
+                return idx
+        if case.pred_index is not None and 0 <= case.pred_index < len(visible):
+            return visible[case.pred_index]
+        return None
+
+    @staticmethod
+    def _boxes_close(
+        left: tuple[float, float, float, float],
+        right: tuple[float, float, float, float],
+        *,
+        tolerance: float = 1e-3,
+    ) -> bool:
+        return all(abs(float(a) - float(b)) <= tolerance for a, b in zip(left, right))
+
     def show_statistics(self) -> None:
         scope = self._prompt_statistics_scope()
         if scope is None:
             return
-        if scope == "folder":
+        if scope == "project":
+            project_scan = self._scan_current_project_annotations()
+            if not self._confirm_project_statistics_run(project_scan):
+                return
+            recs = list(project_scan.records)
+            total_images_override = project_scan.total_images
+            labeled_images_override = project_scan.labeled_images
+            scope_label = "Current project"
+            detail_label = (
+                f"Image root: {project_scan.folder_path}  |  "
+                f"Label root: {self._project_label_root_display()}"
+            )
+        elif scope == "folder":
             folder_scan = self._scan_current_folder_annotations()
+            if not self._confirm_folder_statistics_run(folder_scan):
+                return
             recs = list(folder_scan.records)
             total_images_override = folder_scan.total_images
             labeled_images_override = folder_scan.labeled_images
             scope_label = "Current folder"
+            detail_label = (
+                f"Folder: {folder_scan.folder_path}  |  "
+                f"Label root: {self._folder_label_root_display()}"
+            )
         else:
             recs = self._combined_annotation_records()
             total_images_override = None
             labeled_images_override = None
             scope_label = "Current image"
+            detail_label = ""
         if not recs:
             QtWidgets.QMessageBox.information(
                 self, "Statistics", "No annotations to analyze."
@@ -2147,8 +2536,79 @@ class MyWidget(QtWidgets.QWidget):
             self,
             records=recs,
             scope_label=scope_label,
+            detail_label=detail_label,
             total_images_override=total_images_override,
             labeled_images_override=labeled_images_override,
+        )
+        dlg.exec()
+
+    def run_dataset_qc(self) -> None:
+        scope = self._prompt_validation_scope()
+        if scope is None:
+            return
+        prediction_root = self._prompt_optional_validation_prediction_folder(scope)
+        if prediction_root is False:
+            return
+        if scope == "project":
+            result = self._scan_current_project_validation(prediction_root)
+            if not self._confirm_project_validation_run(result, prediction_root):
+                return
+            scope_label = "Current project"
+            detail_label = (
+                f"Image root: {result.scope_path}  |  "
+                f"Label root: {self._project_label_root_display()}  |  "
+                f"Prediction root: {str(prediction_root) if prediction_root else '(not checked)'}"
+            )
+        else:
+            result = self._scan_current_folder_validation(prediction_root)
+            if not self._confirm_folder_validation_run(result, prediction_root):
+                return
+            scope_label = "Current folder"
+            detail_label = (
+                f"Image folder: {result.scope_path}  |  "
+                f"Label root: {self._folder_label_root_display()}  |  "
+                f"Prediction folder: {str(prediction_root) if prediction_root else '(not checked)'}"
+            )
+        dlg = ValidationDialog(
+            self,
+            result=result,
+            scope_label=scope_label,
+            detail_label=detail_label,
+        )
+        dlg.exec()
+
+    def show_prediction_review_summary(self) -> None:
+        scope = self._prompt_review_summary_scope()
+        if scope is None:
+            return
+        prediction_root = self._prediction_folder_path
+        if prediction_root is None:
+            prediction_root = self._prompt_prediction_folder()
+            if prediction_root is None:
+                return
+        if scope == "project":
+            report = self._scan_current_project_review_report(prediction_root)
+            if not self._confirm_project_review_summary_run(report):
+                return
+            scope_label = "Current project"
+            detail_label = (
+                f"Image root: {report.scope_path}  |  "
+                f"Prediction root: {report.prediction_root}"
+            )
+        else:
+            report = self._scan_current_folder_review_report(prediction_root)
+            if not self._confirm_folder_review_summary_run(report):
+                return
+            scope_label = "Current folder"
+            detail_label = (
+                f"Image folder: {report.scope_path}  |  "
+                f"Prediction folder: {report.prediction_root}"
+            )
+        dlg = PredictionReviewReportDialog(
+            self,
+            report=report,
+            scope_label=scope_label,
+            detail_label=detail_label,
         )
         dlg.exec()
 
@@ -2633,6 +3093,7 @@ class MyWidget(QtWidgets.QWidget):
     def _load_image_file(self, filepath: str, *, ask_confirm: bool) -> bool:
         if ask_confirm and not self._confirm_open_image():
             return False
+        self._sync_current_prediction_review_state()
 
         img_data = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
         if img_data is None:
@@ -2815,6 +3276,8 @@ class MyWidget(QtWidgets.QWidget):
             )
             return None
         items = ["Current image", "Current folder"]
+        if self._project_scope_available():
+            items.append("Current project")
         choice, ok = QtWidgets.QInputDialog.getItem(
             self,
             "Dataset Statistics",
@@ -2825,7 +3288,11 @@ class MyWidget(QtWidgets.QWidget):
         )
         if not ok:
             return None
-        return "folder" if choice == "Current folder" else "image"
+        if choice == "Current folder":
+            return "folder"
+        if choice == "Current project":
+            return "project"
+        return "image"
 
     def _prompt_error_analysis_scope(self) -> str | None:
         if not self.imgfilePath:
@@ -2836,6 +3303,8 @@ class MyWidget(QtWidgets.QWidget):
             )
             return None
         items = ["Current image", "Current folder"]
+        if self._project_scope_available():
+            items.append("Current project")
         choice, ok = QtWidgets.QInputDialog.getItem(
             self,
             "Error Analysis",
@@ -2846,7 +3315,86 @@ class MyWidget(QtWidgets.QWidget):
         )
         if not ok:
             return None
-        return "folder" if choice == "Current folder" else "image"
+        if choice == "Current folder":
+            return "folder"
+        if choice == "Current project":
+            return "project"
+        return "image"
+
+    def _prompt_fp_review_scope(self) -> str | None:
+        if not self.imgfilePath:
+            QtWidgets.QMessageBox.information(
+                self,
+                "FP-to-label review",
+                "Open an image first so FP review can resolve the current folder or project.",
+            )
+            return None
+        items = ["Current folder"]
+        if self._project_scope_available():
+            items.append("Current project")
+        choice, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "FP-to-label review",
+            "Build FP queue from:",
+            items,
+            0,
+            False,
+        )
+        if not ok:
+            return None
+        if choice == "Current project":
+            return "project"
+        return "folder"
+
+    def _prompt_validation_scope(self) -> str | None:
+        if not self.imgfilePath:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Dataset QC",
+                "Open an image first so dataset QC can resolve the current folder or project.",
+            )
+            return None
+        items = ["Current folder"]
+        if self._project_scope_available():
+            items.append("Current project")
+        choice, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "Dataset QC",
+            "Analysis scope:",
+            items,
+            0,
+            False,
+        )
+        if not ok:
+            return None
+        if choice == "Current project":
+            return "project"
+        return "folder"
+
+    def _prompt_review_summary_scope(self) -> str | None:
+        if not self.imgfilePath:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Prediction review summary",
+                "Open an image first so the review summary can resolve the current folder or project.",
+            )
+            return None
+        items = ["Current folder"]
+        if self._project_scope_available():
+            items.append("Current project")
+        choice, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "Prediction review summary",
+            "Analysis scope:",
+            items,
+            0,
+            False,
+        )
+        if not ok:
+            return None
+        if choice == "Current project":
+            return "project"
+        return "folder"
 
     def _current_folder_path(self) -> Path | None:
         if self._folder_image_paths:
@@ -2854,6 +3402,265 @@ class MyWidget(QtWidgets.QWidget):
         if self.imgfilePath:
             return Path(self.imgfilePath).parent
         return None
+
+    def _project_scope_available(self) -> bool:
+        if self._project_config_path is None:
+            return False
+        try:
+            return self._resolve_project_path(self._project_config.image_root).is_dir()
+        except OSError:
+            return False
+
+    def _current_project_image_root(self) -> Path | None:
+        if not self._project_scope_available():
+            return None
+        return self._resolve_project_path(self._project_config.image_root)
+
+    def _folder_label_root_display(self) -> str:
+        label_root = None
+        if self._project_config_path is not None and self._project_config.label_root:
+            label_root = self._resolve_project_path(self._project_config.label_root)
+        if label_root is not None and label_root.exists():
+            return str(label_root)
+        folder_path = self._current_folder_path()
+        if folder_path is not None:
+            inferred = folder_path.parent / "labels"
+            if inferred.exists():
+                return str(inferred)
+        return "(same-folder sidecar / inferred)"
+
+    def _project_label_root_display(self) -> str:
+        if self._project_config_path is not None and self._project_config.label_root:
+            return str(self._resolve_project_path(self._project_config.label_root))
+        return "(project label root unavailable)"
+
+    def _confirm_folder_error_analysis_run(self, result) -> bool:
+        details = [
+            f"Image folder: {result.folder_path}",
+            f"Label root: {self._folder_label_root_display()}",
+            f"Prediction folder: {result.prediction_root}",
+            f"Images found: {result.total_images}",
+            f"Labels matched: {result.labeled_images}",
+            f"Predictions matched: {result.prediction_images}",
+            f"Images analyzable: {result.analyzed_images}",
+            f"Confidence threshold: {self._prediction_conf_threshold:.2f}",
+        ]
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Error analysis summary",
+            "Folder error analysis summary:\n\n" + "\n".join(details) + "\n\nContinue?",
+            QtWidgets.QMessageBox.StandardButton.Ok | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Ok,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Ok
+
+    def _confirm_folder_statistics_run(self, result) -> bool:
+        details = [
+            f"Image folder: {result.folder_path}",
+            f"Label root: {self._folder_label_root_display()}",
+            f"Images found: {result.total_images}",
+            f"Labels matched: {result.labeled_images}",
+            f"Annotations found: {len(result.records)}",
+        ]
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Statistics summary",
+            "Folder statistics summary:\n\n" + "\n".join(details) + "\n\nContinue?",
+            QtWidgets.QMessageBox.StandardButton.Ok | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Ok,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Ok
+
+    def _confirm_project_error_analysis_run(self, result) -> bool:
+        details = [
+            f"Image root: {result.folder_path}",
+            f"Label root: {self._project_label_root_display()}",
+            f"Prediction root: {result.prediction_root}",
+            f"Images found: {result.total_images}",
+            f"Labels matched: {result.labeled_images}",
+            f"Predictions matched: {result.prediction_images}",
+            f"Images analyzable: {result.analyzed_images}",
+            f"Confidence threshold: {self._prediction_conf_threshold:.2f}",
+        ]
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Project error analysis summary",
+            "Project error analysis summary:\n\n" + "\n".join(details) + "\n\nContinue?",
+            QtWidgets.QMessageBox.StandardButton.Ok | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Ok,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Ok
+
+    def _confirm_project_statistics_run(self, result) -> bool:
+        details = [
+            f"Image root: {result.folder_path}",
+            f"Label root: {self._project_label_root_display()}",
+            f"Images found: {result.total_images}",
+            f"Labels matched: {result.labeled_images}",
+            f"Annotations found: {len(result.records)}",
+        ]
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Project statistics summary",
+            "Project statistics summary:\n\n" + "\n".join(details) + "\n\nContinue?",
+            QtWidgets.QMessageBox.StandardButton.Ok | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Ok,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Ok
+
+    def _confirm_folder_validation_run(self, result, prediction_root: Path | None) -> bool:
+        details = [
+            f"Image folder: {result.scope_path}",
+            f"Label root: {self._folder_label_root_display()}",
+            f"Prediction folder: {str(prediction_root) if prediction_root else '(not checked)'}",
+            f"Images found: {result.total_images}",
+            f"Labels matched: {result.matched_labels}",
+            f"Predictions matched: {result.matched_predictions}",
+            f"Issues found: {result.total_issues}",
+        ]
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Dataset QC summary",
+            "Folder dataset QC summary:\n\n" + "\n".join(details) + "\n\nContinue?",
+            QtWidgets.QMessageBox.StandardButton.Ok | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Ok,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Ok
+
+    def _confirm_project_validation_run(self, result, prediction_root: Path | None) -> bool:
+        details = [
+            f"Image root: {result.scope_path}",
+            f"Label root: {self._project_label_root_display()}",
+            f"Prediction root: {str(prediction_root) if prediction_root else '(not checked)'}",
+            f"Images found: {result.total_images}",
+            f"Labels matched: {result.matched_labels}",
+            f"Predictions matched: {result.matched_predictions}",
+            f"Issues found: {result.total_issues}",
+        ]
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Project dataset QC summary",
+            "Project dataset QC summary:\n\n" + "\n".join(details) + "\n\nContinue?",
+            QtWidgets.QMessageBox.StandardButton.Ok | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Ok,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Ok
+
+    def _confirm_folder_review_summary_run(self, report) -> bool:
+        details = [
+            f"Image folder: {report.scope_path}",
+            f"Prediction folder: {report.prediction_root}",
+            f"Images found: {report.total_images}",
+            f"Images with predictions: {report.images_with_predictions}",
+            f"Reviewed images: {report.reviewed_images}",
+            f"Partial images: {report.partial_images}",
+            f"Pending images: {report.pending_images}",
+            f"No prediction images: {report.no_prediction_images}",
+        ]
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Prediction review summary",
+            "Folder prediction review summary:\n\n" + "\n".join(details) + "\n\nContinue?",
+            QtWidgets.QMessageBox.StandardButton.Ok | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Ok,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Ok
+
+    def _confirm_project_review_summary_run(self, report) -> bool:
+        details = [
+            f"Image root: {report.scope_path}",
+            f"Prediction root: {report.prediction_root}",
+            f"Images found: {report.total_images}",
+            f"Images with predictions: {report.images_with_predictions}",
+            f"Reviewed images: {report.reviewed_images}",
+            f"Partial images: {report.partial_images}",
+            f"Pending images: {report.pending_images}",
+            f"No prediction images: {report.no_prediction_images}",
+        ]
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Project prediction review summary",
+            "Project prediction review summary:\n\n" + "\n".join(details) + "\n\nContinue?",
+            QtWidgets.QMessageBox.StandardButton.Ok | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Ok,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Ok
+
+    def _prediction_review_root(self) -> Path:
+        return self._project_config_base_dir()
+
+    def _can_manage_prediction_review_session(self) -> bool:
+        return self._prediction_folder_path is not None and self._current_folder_path() is not None
+
+    def _prompt_prediction_review_resume_mode(self) -> str | None:
+        if not self._can_manage_prediction_review_session():
+            return "resume"
+        if not has_prediction_review_session(
+            image_folder=self._current_folder_path(),
+            prediction_folder=self._prediction_folder_path,
+            review_root=self._prediction_review_root(),
+        ):
+            return "resume"
+        dialog = QtWidgets.QMessageBox(self)
+        dialog.setIcon(QtWidgets.QMessageBox.Icon.Question)
+        dialog.setWindowTitle("Prediction review")
+        dialog.setText("Found saved review state for this image folder and prediction folder.")
+        resume_button = dialog.addButton("Resume review", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        fresh_button = dialog.addButton("Start fresh", QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
+        dialog.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        dialog.exec()
+        clicked = dialog.clickedButton()
+        if clicked == resume_button:
+            return "resume"
+        if clicked == fresh_button:
+            return "fresh"
+        return None
+
+    def _load_saved_prediction_review_session(self) -> dict[str, PredictionReviewState]:
+        if not self._can_manage_prediction_review_session():
+            return {}
+        states = load_prediction_review_session(
+            image_folder=self._current_folder_path(),
+            prediction_folder=self._prediction_folder_path,
+            review_root=self._prediction_review_root(),
+        )
+        return states or {}
+
+    def _save_prediction_review_session(self) -> None:
+        if not self._can_manage_prediction_review_session():
+            return
+        save_prediction_review_session(
+            image_folder=self._current_folder_path(),
+            prediction_folder=self._prediction_folder_path,
+            review_root=self._prediction_review_root(),
+            states=self._prediction_review_states,
+        )
+
+    def _clear_saved_prediction_review_session(self) -> None:
+        if not self._can_manage_prediction_review_session():
+            return
+        remove_prediction_review_session(
+            image_folder=self._current_folder_path(),
+            prediction_folder=self._prediction_folder_path,
+            review_root=self._prediction_review_root(),
+        )
+
+    def clear_saved_prediction_review_state(self) -> None:
+        if not self._can_manage_prediction_review_session():
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Prediction review",
+            "Clear saved review state for this image folder and prediction folder?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self._prediction_review_states.clear()
+        self._clear_saved_prediction_review_session()
+        self._auto_load_predictions_for_current_image()
+        self._refresh_prediction_review_actions()
 
     def _resolve_project_path(self, value: str) -> Path:
         return resolve_project_path(
@@ -2889,9 +3696,29 @@ class MyWidget(QtWidgets.QWidget):
                 return current
         return self._project_config_base_dir()
 
+    def _prediction_directory_for_current_image(self) -> Path | None:
+        if not self.imgfilePath:
+            return None
+        current = Path(self.imgfilePath).parent
+        parts = current.parts
+        for idx in range(len(parts) - 1, -1, -1):
+            if parts[idx].lower() != "images":
+                continue
+            candidate = Path(*parts[:idx], "predictions", *parts[idx + 1 :])
+            if candidate.is_dir():
+                return candidate
+            break
+        sibling = current.parent / "predictions"
+        if sibling.is_dir():
+            return sibling
+        return None
+
     def _default_prediction_directory(self) -> Path:
         if self._prediction_folder_path is not None and self._prediction_folder_path.is_dir():
             return self._prediction_folder_path
+        prediction_dir = self._prediction_directory_for_current_image()
+        if prediction_dir is not None:
+            return prediction_dir
         current = self._current_folder_path()
         if current is not None and current.is_dir():
             return current
@@ -2949,6 +3776,29 @@ class MyWidget(QtWidgets.QWidget):
             return None
         return Path(folder)
 
+    def _prompt_optional_validation_prediction_folder(self, scope: str) -> Path | bool | None:
+        dialog = QtWidgets.QMessageBox(self)
+        dialog.setIcon(QtWidgets.QMessageBox.Icon.Question)
+        dialog.setWindowTitle("Dataset QC")
+        dialog.setText(
+            "Include prediction sidecar validation for the current "
+            + ("project" if scope == "project" else "folder")
+            + " scope?"
+        )
+        include_btn = dialog.addButton("Include predictions…", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        labels_only_btn = dialog.addButton("Labels only", QtWidgets.QMessageBox.ButtonRole.ActionRole)
+        dialog.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        dialog.exec()
+        clicked = dialog.clickedButton()
+        if clicked == include_btn:
+            folder = self._prompt_prediction_folder()
+            if folder is None:
+                return False
+            return folder
+        if clicked == labels_only_btn:
+            return None
+        return False
+
     def _load_predictions_from_txt_path(self, path: Path) -> list:
         body = path.read_text(encoding="utf-8")
         return parse_predictions_yolo_txt(
@@ -2958,50 +3808,114 @@ class MyWidget(QtWidgets.QWidget):
             image_h=self.origin_height,
         )
 
+    def _review_key(self, image_path: str | Path) -> str:
+        return str(Path(image_path).resolve())
+
+    def _review_status_for_image(self, image_path: str | Path) -> str:
+        state = self._prediction_review_states.get(self._review_key(image_path))
+        if state is None:
+            return "pending"
+        return prediction_review_status(state)
+
+    def _sync_current_prediction_review_state(
+        self,
+        *,
+        accepted_delta: int = 0,
+        rejected_delta: int = 0,
+    ) -> None:
+        if self._fp_review_queue:
+            return
+        if self._prediction_folder_path is None or not self.imgfilePath:
+            return
+        key = self._review_key(self.imgfilePath)
+        state = self._prediction_review_states.get(key)
+        if state is None:
+            base_count = len(self.predictions) + int(accepted_delta) + int(rejected_delta)
+            state = PredictionReviewState(
+                original_count=max(0, base_count),
+                remaining_predictions=tuple(clone_predictions(self.predictions)),
+            )
+        self._prediction_review_states[key] = update_prediction_review_state(
+            state,
+            accepted_delta=accepted_delta,
+            rejected_delta=rejected_delta,
+            remaining_predictions=self.predictions,
+        )
+        self._save_prediction_review_session()
+        self._refresh_prediction_review_actions()
+
     def _auto_load_predictions_for_current_image(self) -> None:
         if self._prediction_folder_path is None or not self.imgfilePath or not getattr(self, "origin_width", None):
             self._refresh_prediction_review_actions()
             return
-        try:
-            self.predictions = load_prediction_sidecar(
-                self.imgfilePath,
-                prediction_root=self._prediction_folder_path,
-                object_list=self.object_list,
-                image_w=self.origin_width,
-                image_h=self.origin_height,
-            )
-        except (OSError, ValueError, IndexError):
-            self.predictions = []
+        key = self._review_key(self.imgfilePath)
+        state = self._prediction_review_states.get(key)
+        if state is not None:
+            self.predictions = clone_predictions(state.remaining_predictions)
+        else:
+            try:
+                self.predictions = load_prediction_sidecar(
+                    self.imgfilePath,
+                    prediction_root=self._prediction_folder_path,
+                    object_list=self.object_list,
+                    image_w=self.origin_width,
+                    image_h=self.origin_height,
+                )
+                self._prediction_review_states[key] = initial_prediction_review_state(self.predictions)
+                self._save_prediction_review_session()
+            except (OSError, ValueError, IndexError):
+                self.predictions = []
         self._refresh_pred_listwidget()
+        if self.predictions:
+            self.chk_show_preds.setChecked(True)
         if getattr(self, "origin_canvas", None) is not None:
             self.set_img_ratio()
 
     def _has_review_prediction_for_image(self, image_path: str | Path) -> bool:
         if self._prediction_folder_path is None:
             return False
+        key = self._review_key(image_path)
+        if key in self._prediction_review_states:
+            return True
         return has_prediction_sidecar(image_path, prediction_root=self._prediction_folder_path)
 
+    def _maybe_advance_prediction_review(self) -> None:
+        if self._fp_review_queue:
+            return
+        if self._prediction_folder_path is None or not self.imgfilePath:
+            return
+        if self._review_status_for_image(self.imgfilePath) != "reviewed":
+            return
+        self._open_next_review_image(notify_if_missing=False)
+
     def open_next_review_image(self) -> None:
+        self._open_next_review_image(notify_if_missing=True)
+
+    def _open_next_review_image(self, *, notify_if_missing: bool) -> None:
         if self._prediction_folder_path is None or not self._folder_image_paths:
-            QtWidgets.QMessageBox.information(
-                self,
-                "Prediction review",
-                "Load a prediction folder and open an image folder first.",
-            )
+            if notify_if_missing:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Prediction review",
+                    "Load a prediction folder and open an image folder first.",
+                )
             return
         start_idx = self._folder_image_index
         for idx in range(start_idx + 1, len(self._folder_image_paths)):
             if not self._has_review_prediction_for_image(self._folder_image_paths[idx]):
                 continue
+            if self._review_status_for_image(self._folder_image_paths[idx]) == "reviewed":
+                continue
             if self._load_image_file(self._folder_image_paths[idx], ask_confirm=False):
                 self._folder_image_index = idx
                 self._refresh_folder_navigation_ui()
             return
-        QtWidgets.QMessageBox.information(
-            self,
-            "Prediction review",
-            "No later images with prediction sidecars were found in the current folder.",
-        )
+        if notify_if_missing:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Prediction review",
+                "No later unreviewed images with prediction sidecars were found in the current folder.",
+            )
 
     def _scan_current_folder_annotations(self):
         folder_path = self._current_folder_path()
@@ -3014,14 +3928,37 @@ class MyWidget(QtWidgets.QWidget):
             image_root = self._resolve_project_path(self._project_config.image_root)
         if self._project_config.label_root:
             label_root = self._resolve_project_path(self._project_config.label_root)
+        current_image_records = self._current_image_records_override()
+        current_image_path = (self.imgfilePath or None) if current_image_records is not None else None
         return scan_folder_annotation_records(
             folder_path,
             object_list=self.object_list,
             class_id_to_super=sup,
             image_root=image_root,
             label_root=label_root,
-            current_image_path=self.imgfilePath or None,
-            current_image_records=self._combined_annotation_records(),
+            current_image_path=current_image_path,
+            current_image_records=current_image_records,
+        )
+
+    def _scan_current_project_annotations(self):
+        image_root = self._current_project_image_root()
+        if image_root is None:
+            raise ValueError("No current project image root available")
+        sup = {c.class_id: c.super_category for c in self.class_catalog.classes}
+        label_root = None
+        if self._project_config.label_root:
+            label_root = self._resolve_project_path(self._project_config.label_root)
+        current_image_records = self._current_image_records_override()
+        current_image_path = (self.imgfilePath or None) if current_image_records is not None else None
+        return scan_folder_annotation_records(
+            image_root,
+            object_list=self.object_list,
+            class_id_to_super=sup,
+            recursive=True,
+            image_root=image_root,
+            label_root=label_root,
+            current_image_path=current_image_path,
+            current_image_records=current_image_records,
         )
 
     def _scan_current_folder_error_cases(self, prediction_root: Path):
@@ -3034,17 +3971,143 @@ class MyWidget(QtWidgets.QWidget):
             image_root = self._resolve_project_path(self._project_config.image_root)
         if self._project_config.label_root:
             label_root = self._resolve_project_path(self._project_config.label_root)
+        current_gt_bundle = self._current_image_bundle_override()
+        current_predictions = self._current_predictions_override(prediction_root)
+        current_image_path = (self.imgfilePath or None) if current_gt_bundle is not None or current_predictions is not None else None
         return scan_folder_error_cases(
             folder_path,
             object_list=self.object_list,
             prediction_root=prediction_root,
             image_root=image_root,
             label_root=label_root,
-            current_image_path=self.imgfilePath or None,
-            current_image_gt_bundle=self._current_image_annotation_bundle(),
-            current_image_predictions=self.predictions,
+            current_image_path=current_image_path,
+            current_image_gt_bundle=current_gt_bundle,
+            current_image_predictions=current_predictions,
             min_confidence=self._prediction_conf_threshold,
         )
+
+    def _scan_current_project_error_cases(self, prediction_root: Path):
+        image_root = self._current_project_image_root()
+        if image_root is None:
+            raise ValueError("No current project image root available")
+        label_root = None
+        if self._project_config.label_root:
+            label_root = self._resolve_project_path(self._project_config.label_root)
+        current_gt_bundle = self._current_image_bundle_override()
+        current_predictions = self._current_predictions_override(prediction_root)
+        current_image_path = (self.imgfilePath or None) if current_gt_bundle is not None or current_predictions is not None else None
+        return scan_folder_error_cases(
+            image_root,
+            object_list=self.object_list,
+            prediction_root=prediction_root,
+            recursive=True,
+            image_root=image_root,
+            label_root=label_root,
+            current_image_path=current_image_path,
+            current_image_gt_bundle=current_gt_bundle,
+            current_image_predictions=current_predictions,
+            min_confidence=self._prediction_conf_threshold,
+        )
+
+    def _scan_current_folder_validation(self, prediction_root: Path | None):
+        folder_path = self._current_folder_path()
+        if folder_path is None:
+            raise ValueError("No current folder available")
+        image_root = None
+        label_root = None
+        if self._project_config.image_root:
+            image_root = self._resolve_project_path(self._project_config.image_root)
+        if self._project_config.label_root:
+            label_root = self._resolve_project_path(self._project_config.label_root)
+        return scan_dataset_validation(
+            folder_path,
+            object_list=self.object_list,
+            image_root=image_root,
+            label_root=label_root,
+            prediction_root=prediction_root,
+        )
+
+    def _scan_current_project_validation(self, prediction_root: Path | None):
+        image_root = self._current_project_image_root()
+        if image_root is None:
+            raise ValueError("No current project image root available")
+        label_root = None
+        if self._project_config.label_root:
+            label_root = self._resolve_project_path(self._project_config.label_root)
+        return scan_dataset_validation(
+            image_root,
+            object_list=self.object_list,
+            recursive=True,
+            image_root=image_root,
+            label_root=label_root,
+            prediction_root=prediction_root,
+        )
+
+    def _scan_current_folder_review_report(self, prediction_root: Path):
+        folder_path = self._current_folder_path()
+        if folder_path is None:
+            raise ValueError("No current folder available")
+        image_root = None
+        if self._project_config.image_root:
+            image_root = self._resolve_project_path(self._project_config.image_root)
+        return scan_prediction_review_report(
+            folder_path,
+            prediction_root=prediction_root,
+            review_root=self._prediction_review_root(),
+            image_root=image_root,
+            current_states=self._prediction_review_states,
+        )
+
+    def _scan_current_project_review_report(self, prediction_root: Path):
+        image_root = self._current_project_image_root()
+        if image_root is None:
+            raise ValueError("No current project image root available")
+        return scan_prediction_review_report(
+            image_root,
+            prediction_root=prediction_root,
+            review_root=self._prediction_review_root(),
+            recursive=True,
+            image_root=image_root,
+            current_states=self._prediction_review_states,
+        )
+
+    def _has_current_annotation_override(self) -> bool:
+        return bool(
+            getattr(self, "real_data", None)
+            or getattr(self, "real_pimg_data", None)
+            or self._annotation_controller.can_undo()
+            or self._annotation_controller.can_redo()
+        )
+
+    def _current_image_records_override(self):
+        if not self._has_current_annotation_override():
+            return None
+        return self._combined_annotation_records()
+
+    def _current_image_bundle_override(self):
+        if not self._has_current_annotation_override():
+            return None
+        return self._current_image_annotation_bundle()
+
+    def _prediction_root_matches_loaded(self, prediction_root: Path) -> bool:
+        if self._prediction_folder_path is None:
+            return False
+        try:
+            return Path(prediction_root).resolve() == self._prediction_folder_path.resolve()
+        except OSError:
+            return False
+
+    def _has_current_prediction_override(self, prediction_root: Path) -> bool:
+        if self.predictions:
+            return True
+        if not self.imgfilePath or not self._prediction_root_matches_loaded(prediction_root):
+            return False
+        return self._review_key(self.imgfilePath) in self._prediction_review_states
+
+    def _current_predictions_override(self, prediction_root: Path):
+        if not self._has_current_prediction_override(prediction_root):
+            return None
+        return self.predictions
 
     def _current_image_annotation_bundle(self):
         records = self._combined_annotation_records()

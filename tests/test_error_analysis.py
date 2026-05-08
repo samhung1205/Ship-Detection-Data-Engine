@@ -79,6 +79,8 @@ def test_match_fp_fn() -> None:
     types = {c.error_type for c in cases}
     assert ERROR_FP in types
     assert ERROR_FN in types
+    fp_case = next(c for c in cases if c.error_type == ERROR_FP)
+    assert fp_case.pred_box == (500.0, 500.0, 600.0, 600.0)
 
 
 def test_match_localization() -> None:

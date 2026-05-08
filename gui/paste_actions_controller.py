@@ -117,9 +117,9 @@ class PasteActionsController:
     ) -> bool:
         data_row = [class_name, *list(bbox_row)]
         real_row = [class_name, *list(real_bbox_row)]
-        self._list_widget.addItem(class_name)
         if class_name not in self._get_object_names():
-            self._append_object_name(class_name)
+            return False
+        self._list_widget.addItem(class_name)
         record = None
         if self._build_record is not None:
             record = self._build_record(class_name, real_row)
@@ -152,12 +152,17 @@ class PasteActionsController:
         old_name = self._document.pimg_data[row][0]
         if old_name == new_name:
             return
+        if new_name not in self._get_object_names():
+            QtWidgets.QMessageBox.information(
+                self._parent,
+                "Paste class mapping",
+                "Unknown class. Add new classes through Class mapping first.",
+            )
+            return
         self._document.rename_paste(row, new_name)
         item = self._list_widget.item(row)
         if item is not None:
             item.setText(new_name)
-        if new_name not in self._get_object_names():
-            self._append_object_name(new_name)
 
     def delete_selected(self) -> None:
         self.remove_row(self.current_row())
